@@ -132,6 +132,16 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts\build.ps1 -Python (G
 
 The ZIP is written to `release/`. It contains a folder-based executable bundle, installer, docs and dependency licenses. The automated Windows build is in `.github/workflows/windows.yml`.
 
+Additional checks run without opening desktop windows or changing personal data:
+
+```powershell
+python scripts/check-persistence.py
+python scripts/check-scheduling.py
+python scripts/measure_resources.py --pid <main-process-id> --seconds 20
+```
+
+The persistence and scheduling checks also accept `--exe C:\path\to\CodexMeter.exe` to check a packaged app.
+
 ## Contribute other coding agents
 
 Contributions for other coding agents are welcome. The current release supports **Codex only**. Help add your agent's usage and speed so one small app can show multiple platforms together.
@@ -147,28 +157,6 @@ Original code: [MIT](LICENSE). Third-party components retain their own licenses;
 
 ## Troubleshooting refresh
 
-v1.0.1 fixes an HTTPS startup failure in packages built from a Codex Python runtime: the runtime requires an adjacent certificate data file, which is now included. TLS verification remains enabled, and the packaged smoke test creates a verified SSL context.
+Packages built from a Codex Python runtime include its required certificate data file. TLS verification remains enabled, and the packaged smoke test creates a verified SSL context.
 
 A tool-update fallback means current logs were scanned with an older working tool; it does not mean the displayed scan failed. A failed data source is reported as **Partial refresh**, keeps its previous value, and exposes the error on hover. Network access and log size affect timing. With several gigabytes of logs, a full ccusage scan can take longer than a speed scan.
-
-## Resource use in v1.0.2
-
-A 20-second visible-window spot check used about **43 MiB working set / 23 MiB private memory**, down from about 64 / 40 MiB in v1.0.1. Hidden in the tray, the sample used about 41 / 23 MiB with no measurable CPU-time increase over 20 seconds. These are measurements on one computer, not fixed resource limits or a power-draw guarantee.
-
-Workers skip GUI libraries. Small ICO frames replace the full-size tray bitmap. Hidden windows defer redraws, refresh polling stops between scans, and quitting terminates owned scan commands and their children. External ccusage and speed parsing still use CPU, disk and more memory during refresh. See [measurement details and reproduction steps](docs/performance.md).
-
-## Startup and latest-result storage in v1.0.6
-
-The window is built from the saved snapshot before it becomes visible. Opening the desktop shortcut restores an already-ready instance instead of exposing a partially built page. The title-strip customization uses native Windows styles and does not install Python window-procedure callbacks. Desktop reopening locates the marked main window rather than matching its title, so a tooltip cannot be mistaken for the app. Tooltips are cleared when hiding to the tray.
-
-Each successful usage, limits or speed result is saved before it is displayed. All results replace the same `snapshot.json`; no refresh history is kept. Writes flush to disk and atomically replace the file, so an interrupted replacement leaves the previous valid snapshot intact. Failed sources keep their previous results. Opening a cached version after an upgrade does not require a new scan.
-
-To check quit/reopen behavior without visible windows or personal data, run `python scripts/check-persistence.py`. Use `--exe C:\path\to\CodexMeter.exe` to check the frozen application. The helper uses two independent processes and a temporary `CODEX_METER_DATA_DIR`, verifies cached page labels and settings without pressing Save, then removes its test data.
-
-## Header dragging in v1.0.7
-
-Header dragging follows pointer deltas with non-blocking position updates. It no longer enters the synchronous native caption-move loop. Multiple pending pointer updates are coalesced into one idle update, and releasing the mouse ends the drag. The brand's top spacing is increased by about one third; window-control height is increased from 33 to 40 while remaining flush to the top/right edges.
-
-## Window display in v1.0.9
-
-The main window stays transparent until its first layout and native frame setup are complete. Restoring from the tray uses the same display step. Refresh builds the next page while the current page remains visible, then swaps them once. GUI tests keep their windows transparent so routine checks do not flash test windows on the desktop.
