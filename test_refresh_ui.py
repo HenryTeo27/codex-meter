@@ -199,6 +199,70 @@ class HiddenRefreshTests(unittest.TestCase):
         self.assertIn('Partial refresh',app.data['status'])
         self.assertIn('API unavailable',app.data['details'])
 
+    def test_account_and_window_switches_control_next_manual_and_automatic_scan(self):
+        app=self.app
+        homes=[Path(self.folder.name)/name for name in ('gpt','api')]
+        for home in homes: (home/'sessions').mkdir(parents=True)
+        ids=[meter.source_id(home) for home in homes]
+        calls=[];release=threading.Event();started=threading.Event()
+        def usage(homes):
+            calls.append(('usage',list(homes)))
+            return meter.combined_usage([{'source':meter.source_id(home),'short':'GPT','month_tokens':10,
+                'total_tokens':100,'month_cost':1,'total_cost':2} for home in homes],'2026-11')
+        def limits(homes):
+            calls.append(('limits',list(homes)))
+            return {'accounts':[{'source':meter.source_id(home),'kind':'chatgpt','limits':{}} for home in homes]}
+        def speed(homes,windows):
+            calls.append(('speed',list(homes),list(windows)));started.set()
+            if not release.wait(5): raise RuntimeError('Timed out')
+            return {**{key:[] for key in windows},'sources':[
+                {'source':meter.source_id(home),'short':'GPT',**{key:[self.old_row] for key in windows}} for home in homes]},''
+        try:
+            with patch.object(meter,'codex_homes',return_value=homes),patch.object(meter.tk.Toplevel,'deiconify'), \
+                 patch.object(meter.tk.Toplevel,'grab_set'),patch.object(meter,'get_usage',side_effect=usage), \
+                 patch.object(meter,'get_limits',side_effect=limits),patch.object(meter,'get_speed',side_effect=speed), \
+                 patch.object(app,'draw',side_effect=AssertionError('Rebuilt page')):
+                app.settings_dialog();variables=app.settings_vars
+                self.assertTrue(variables['speed_windows']['4h'].get())
+                self.assertTrue(variables['speed_windows']['1'].get())
+                self.assertFalse(variables['speed_windows']['14'].get())
+                variables['accounts'][ids[1]].set(False)
+                variables['speed_windows']['1'].set(False)
+                app.refresh();self.assertTrue(started.wait(2))
+                # Changes while running must not alter this scan's captured inputs.
+                variables['accounts'][ids[0]].set(False);variables['accounts'][ids[1]].set(True)
+                variables['speed_windows']['4h'].set(False);variables['speed_windows']['14'].set(True)
+                release.set();self.pump_until(lambda:not app.busy)
+                self.assertIn(('speed',[homes[0]],['4h']),calls)
+                self.assertIn(('usage',[homes[0]]),calls);self.assertIn(('limits',[homes[0]]),calls)
+                calls.clear();app.settings['interval']=2;app.data['last_refresh_attempt_at']=time.time()-3*3600
+                app.scheduled();self.pump_until(lambda:not app.busy)
+                self.assertIn(('speed',[homes[1]],['14']),calls)
+                self.assertIn(('usage',[homes[1]]),calls);self.assertIn(('limits',[homes[1]]),calls)
+                self.assertEqual({item['source'] for item in app.data['usage']['sources']},set(ids))
+                self.assertEqual({item['source'] for item in app.data['speed']['sources']},set(ids))
+                self.assertEqual({item['source'] for item in app.data['limits']['accounts']},set(ids))
+                app.update_content()
+                self.assertEqual(app.content_widgets['periods']['4h'].winfo_manager(),'')
+                self.assertEqual(app.content_widgets['periods']['1'].winfo_manager(),'')
+                self.assertEqual(app.content_widgets['periods']['14'].winfo_manager(),'pack')
+                variables['accounts'][ids[0]].set(True)
+                self.assertEqual(meter.load_settings()['disabled_sources'] if 'disabled_sources' in meter.load_settings() else [],[])
+                variables['speed_windows']['14'].set(False)
+                self.assertEqual(meter.load_settings()['speed_windows'],[])
+                self.assertTrue(app.close_settings())
+        finally: release.set()
+        # The real all-off functions must not start CLI workers or resolve npx.
+        app.settings['disabled_sources']=ids
+        with patch.object(meter,'codex_homes',return_value=homes), \
+             patch.object(meter,'worker_call',side_effect=AssertionError('All-off worker started')), \
+             patch.object(meter.shutil,'which',side_effect=AssertionError('All-off npx lookup')):
+            app.refresh();self.pump_until(lambda:not app.busy)
+        self.assertFalse(app.refresh_errors)
+        self.assertEqual({item['source'] for item in app.data['usage']['sources']},set(ids))
+        self.assertEqual({item['source'] for item in app.data['speed']['sources']},set(ids))
+        self.assertEqual(app.root.state(),'withdrawn')
+
     def test_settings_toggle_saves_immediately_and_filters_all_displays(self):
         app=self.app
         homes=[Path(self.folder.name)/'.codex',Path(self.folder.name)/'.codex-api']

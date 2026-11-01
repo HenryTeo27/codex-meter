@@ -155,7 +155,7 @@ class MultiHomeTests(unittest.TestCase):
             with patch.object(meter, 'codex_homes', return_value=homes), \
                  patch.object(meter.importlib.util, 'spec_from_file_location', return_value=spec), \
                  patch.object(meter.importlib.util, 'module_from_spec', return_value=engine):
-                result = meter.speed_batch('test-engine.py')
+                result = meter.speed_batch('test-engine.py',windows=['1','14'])
             self.assertEqual(counts, [2, 2, 2, 2, 1, 1])
             self.assertEqual(len(result['sources']), 2)
             meter.sys.modules.pop('_codex_meter_speed', None)

@@ -41,13 +41,14 @@ VENDOR = SPEED.parent / 'vendor'
 UPSTREAM = 'https://gist.githubusercontent.com/pszemraj/f8fe69ff5002c3bd0825edfd02001635/raw/codex_speed.py'
 CREATE = 0x08000000 if os.name == 'nt' else 0
 PYTHON = str(Path(sys.executable).with_name('python.exe')) if Path(sys.executable).name.lower() == 'pythonw.exe' else sys.executable
-VERSION = '1.1.5'
+VERSION = '1.1.6'
 REPOSITORY = 'https://github.com/HenryTeo27/codex-meter'
 CONTENT_PAD = 28
 SETTINGS_WRAP = 450
 INTERVALS = {'Manual':0, '30 minutes':0.5, '1 hour':1, '2 hours':2,
              '4 hours':4, '6 hours':6, '8 hours':8, '12 hours':12}
-DEFAULT = {'interval': 2, 'reserve': 600000000, 'appearance':'system'}
+SPEED_WINDOWS = {'4h':('4 hours',4), '1':('1 day',24), '14':('14 days',336)}
+DEFAULT = {'interval': 2, 'reserve': 600000000, 'appearance':'system', 'speed_windows':['4h','1']}
 DEADLINE_CHECK_MS = 60000
 APP_UPDATE_INTERVAL = 6*3600
 APP_UPDATE_RETRY = 3600
@@ -230,11 +231,39 @@ def load_settings():
         settings['interval']=saved['interval']
     if type(saved.get('reserve')) is int and saved['reserve']>=0: settings['reserve']=saved['reserve']
     if saved.get('appearance') in ('system','light','dark'): settings['appearance']=saved['appearance']
+    settings['speed_windows']=selected_speed_windows(saved)
     disabled=saved.get('disabled_sources')
     if isinstance(disabled,list):
         disabled=list(dict.fromkeys(value for value in disabled if isinstance(value,str) and value))
         if disabled: settings['disabled_sources']=disabled
     return settings
+
+
+def selected_speed_windows(settings):
+    values=settings.get('speed_windows',DEFAULT['speed_windows'])
+    if not isinstance(values,list): values=DEFAULT['speed_windows']
+    return [key for key in SPEED_WINDOWS if key in values]
+
+
+def merge_cached_sources(previous,value,enabled_ids,windows=None):
+    """Keep disabled results without collecting them; fresh empty results replace old ones."""
+    key='accounts' if 'accounts' in value else 'sources'
+    if key not in value: return value
+    previous=previous or {}
+    old={item['source']:item for item in previous.get(key,[])}
+    fresh=[]
+    for item in value[key]:
+        if windows is not None:
+            item={**{k:v for k,v in old.get(item['source'],{}).items()
+                     if k in SPEED_WINDOWS and k not in windows},**item}
+        fresh.append(item)
+    fresh_ids={item['source'] for item in fresh}
+    cached=[item for identity,item in old.items() if identity not in fresh_ids and (identity not in enabled_ids or windows==[])]
+    cached=[{**item,'stale':True} if 'month_tokens' in item else item for item in cached]
+    result={**value,key:fresh+cached}
+    if windows is not None:
+        result={**{k:v for k,v in previous.items() if k in SPEED_WINDOWS and k not in windows},**result}
+    return result
 
 
 def enabled_source(source,settings):
@@ -433,10 +462,11 @@ def get_limits(homes=None):
     return {**first,'accounts':accounts,'errors':errors}
 
 def get_usage(homes=None):
+    homes=enabled_homes() if homes is None else homes
+    month = datetime.now().strftime('%Y-%m')
+    if not homes: return {**combined_usage([],month),'failed_sources':[]}
     npx = shutil.which('npx.cmd') or shutil.which('npx')
     if not npx: raise RuntimeError('Node.js / npx not found')
-    month = datetime.now().strftime('%Y-%m')
-    homes=enabled_homes() if homes is None else homes
     names=short_names(homes)
     homes=[home for home in homes if any((home/name).is_dir() for name in ('sessions','archived_sessions'))]
     def query(home):
@@ -469,12 +499,13 @@ def parse_speed(raw):
         result.append({'model':parts[0], 'normal':parts[1], 'fast':parts[2], 'ratio':parts[3], 'normal_n':parts[4], 'fast_n':parts[5]})
     return result
 
-def get_speed(homes=None):
+def get_speed(homes=None,windows=None):
     homes=enabled_homes() if homes is None else homes
-    if not homes: return {'1':[],'14':[],'sources':[]},''
+    windows=selected_speed_windows(load_settings()) if windows is None else selected_speed_windows({'speed_windows':windows})
+    if not homes or not windows: return {**{key:[] for key in windows},'sources':[]},''
     with tempfile.TemporaryDirectory(prefix='codex-meter-speed-') as tmp:
         env=os.environ.copy();env.pop('OPENAI_API_KEY',None);env.pop('CODEX_API_KEY',None)
-        value=worker_call('--speed-all',[json.dumps([str(home) for home in homes])],Path(tmp)/'result.json',145,env=env)
+        value=worker_call('--speed-all',[json.dumps([str(home) for home in homes]),json.dumps(windows)],Path(tmp)/'result.json',145,env=env)
         return value[0],value[1]
 
 
@@ -516,7 +547,10 @@ def resume_app_update_before_window():
     except (OSError,ValueError,RuntimeError,KeyError,TypeError): return False
 
 
-def scan_speed(homes=None):
+def scan_speed(homes=None,windows=None):
+    homes=enabled_homes() if homes is None else homes
+    windows=selected_speed_windows(load_settings()) if windows is None else selected_speed_windows({'speed_windows':windows})
+    if not homes or not windows: return {**{key:[] for key in windows},'sources':[]},''
     import urllib.request, ast
     note=''
     with tempfile.TemporaryDirectory(prefix='codex-meter-') as tmp:
@@ -540,7 +574,7 @@ def scan_speed(homes=None):
             if not candidate.exists(): raise RuntimeError('First speed scan needs internet to download codex-speed')
             note='Speed update unavailable; using last available copy'
         def scan(script):
-            return speed_batch(script,homes)
+            return speed_batch(script,homes,windows)
         try: output=scan(candidate)
         except Exception:
             fallback=CACHED_SPEED if CACHED_SPEED.exists() else SPEED
@@ -553,7 +587,10 @@ def scan_speed(homes=None):
                     shutil.copyfile(candidate,CACHED_SPEED)
         return output,note
 
-def speed_batch(script,homes=None):
+def speed_batch(script,homes=None,windows=None):
+    homes=enabled_homes() if homes is None else homes
+    windows=selected_speed_windows(load_settings()) if windows is None else selected_speed_windows({'speed_windows':windows})
+    if not homes or not windows: return {**{key:[] for key in windows},'sources':[]}
     spec=importlib.util.spec_from_file_location('_codex_meter_speed',script)
     engine=importlib.util.module_from_spec(spec)
     sys.modules[spec.name]=engine
@@ -562,16 +599,16 @@ def speed_batch(script,homes=None):
     import orjson
     engine.json=SimpleNamespace(loads=orjson.loads,dumps=json.dumps,JSONDecodeError=orjson.JSONDecodeError)
     now=datetime.now(timezone.utc)
+    earliest=now-timedelta(hours=max(SPEED_WINDOWS[key][1] for key in windows))
     original_find=engine.find_rollouts
     def recent_rollouts(home,*args,**kwargs):
         result=[]
         for path in original_find(home):
             try:
-                if path.stat().st_mtime >= (now-timedelta(days=14)).timestamp(): result.append(path)
+                if path.stat().st_mtime >= earliest.timestamp(): result.append(path)
             except OSError: result.append(path)
         return result
     engine.find_rollouts=recent_rollouts
-    homes=enabled_homes() if homes is None else homes
     names=short_names(homes)
     groups=[];samples=[];seen=set();totals={}
     for home in homes:
@@ -591,17 +628,17 @@ def speed_batch(script,homes=None):
     tz=datetime.now().astimezone().tzinfo or timezone.utc
     def report(items,metadata):
         output={}
-        for days in (1,14):
-            cutoff=now-timedelta(days=days)
-            selected=[sample for sample in items if datetime.fromisoformat(sample.completed_at)>=cutoff and sample.output_tokens>=100]
+        for key in windows:
+            cutoff=now-timedelta(hours=SPEED_WINDOWS[key][1])
+            selected=[sample for sample in items if cutoff<=datetime.fromisoformat(sample.completed_at)<=now and sample.output_tokens>=100]
             if not selected:
-                output[str(days)]=[]
+                output[key]=[]
                 continue
             buffer=io.StringIO()
             from rich.console import Console
             with contextlib.redirect_stdout(buffer), contextlib.redirect_stderr(buffer):
                 engine.print_report(engine.build_report(selected,metadata,100,tz),selected,tz,granularity='summary',console=Console(file=buffer,width=140,highlight=False))
-            output[str(days)]=parse_speed(buffer.getvalue())
+            output[key]=parse_speed(buffer.getvalue())
         return output
     output=report(samples,totals)
     output['sources']=[{'source':source_id(home),'label':source_label(home),'short':names[source_id(home)],**report(items,metadata)}
@@ -955,7 +992,9 @@ class App:
     def compact_height(self):
         """Fit the first speed table once at startup; refresh never resizes the app."""
         self.root.update_idletasks()
-        end=self.day1_grid.winfo_y()+self.day1_grid.winfo_reqheight()
+        selected=selected_speed_windows(self.settings)
+        section=self.content_widgets['periods'][selected[0]] if selected else self.content_widgets['speed_heading']
+        end=section.winfo_y()+section.winfo_reqheight()
         height=self.root.winfo_height()+end+8-self.canvas.winfo_height()
         height=max(360,min(height,self.root.winfo_screenheight()-80))
         # Tk applies this request on mapping; the window stays hidden until then.
@@ -977,8 +1016,9 @@ class App:
         previous.destroy()
 
     def draw_content(self):
-        widgets={'usage':{},'speed':{},'empty':{},'grids':{}}
+        widgets={'usage':{},'speed':{},'empty':{},'grids':{},'periods':{}}
         self.content_widgets=widgets
+        self.visible_speed_windows=None
         limits=tk.Frame(self.body,bg=self.bg);limits.pack(fill='x')
         line=tk.Frame(limits,bg=self.bg);line.pack(fill='x',pady=(0,10))
         widgets['primary']=self.label(line,'',16,'#222426',anchor='w')
@@ -1003,11 +1043,13 @@ class App:
         delta.pack(fill='x',pady=(7,10));widgets['delta']=delta
         Tooltip(delta,lambda:delta_tooltip(self.data,self.settings) if 'delta_sources' in self.data or self.data.get('delta') is not None else 'Available after the next successful refresh')
         tk.Frame(self.body,bg=self.color('#e9eaec'),height=1).pack(fill='x')
-        self.label(self.body,'Speed',12,'#292d30',anchor='w').pack(fill='x',pady=(11,7))
-        for days in ('1','14'):
-            period=tk.Frame(self.body,bg=self.bg);period.pack(fill='x',pady=(6,7))
-            self.period_badge(period,'14 days' if days=='14' else '1 day').pack(side='left')
-            grid=tk.Frame(self.body,bg=self.bg); grid.pack(fill='x',pady=(0,6))
+        heading=self.label(self.body,'Speed',12,'#292d30',anchor='w');heading.pack(fill='x',pady=(11,7))
+        widgets['speed_heading']=heading
+        for days,(title,hours) in SPEED_WINDOWS.items():
+            section=tk.Frame(self.body,bg=self.bg);widgets['periods'][days]=section
+            period=tk.Frame(section,bg=self.bg);period.pack(fill='x',pady=(6,7))
+            self.period_badge(period,title).pack(side='left')
+            grid=tk.Frame(section,bg=self.bg); grid.pack(fill='x',pady=(0,6))
             if days=='1': self.day1_grid=grid
             widgets['grids'][days]=grid;widgets['speed'][days]={}
             for i,v in enumerate(['Model','Normal','Fast','Ratio']):
@@ -1048,7 +1090,16 @@ class App:
                 self.set_widget_options(widgets['usage'][key],text=f'${cost:,.2f}' if cost is not None else '—')
             self.set_widget_options(widgets['delta'],text=delta_text(self.data,self.settings))
         if source in (None,'speed'):
-            for days in ('1','14'): self.update_speed(days,displayed_speed(self.data,days,self.settings))
+            selected=selected_speed_windows(self.settings)
+            if getattr(self,'visible_speed_windows',None)!=selected:
+                for section in widgets['periods'].values(): section.pack_forget()
+                for key in selected: widgets['periods'][key].pack(fill='x')
+                self.visible_speed_windows=list(selected)
+            for days in selected:
+                self.update_speed(days,displayed_speed(self.data,days,self.settings))
+                speed=self.data.get('speed',{})
+                scanned=days in speed or any(days in item for item in speed.get('sources',[]) if enabled_source(item['source'],self.settings))
+                self.set_widget_options(widgets['empty'][days],text='No available samples' if scanned else 'Available after next refresh')
 
     def update_speed(self,days,rows):
         widgets=self.content_widgets;grid=widgets['grids'][days];existing=widgets['speed'][days]
@@ -1139,14 +1190,22 @@ class App:
             Tooltip(option,str(home)+('\n'+account['email'] if account.get('email') else ''))
         if not homes: self.label(account_box,'No local Codex accounts found',10,anchor='w').pack(fill='x')
         self.label(account_box,'Off excludes this account from the next refresh and displayed totals.',9,anchor='w',wraplength=SETTINGS_WRAP,justify='left').pack(fill='x',pady=(5,0))
-        self.label(box,'Reserve adjustment (tokens)',11,anchor='w').grid(row=3,column=0,sticky='w',pady=6)
-        ttk.Entry(box,textvariable=r,width=21,font=('Segoe UI',10),style='Meter.TEntry').grid(row=3,column=1,padx=(20,0))
+        speed_box=tk.Frame(box,bg=self.bg);speed_box.grid(row=3,column=0,columnspan=2,sticky='ew',pady=(0,12))
+        self.label(speed_box,'Speed windows',11,'#292d30',anchor='w').pack(fill='x',pady=(0,5))
+        speed_choices=tk.Frame(speed_box,bg=self.bg);speed_choices.pack(fill='x')
+        speed_vars={key:tk.BooleanVar(value=key in selected_speed_windows(self.settings)) for key in SPEED_WINDOWS}
+        self.settings_vars['speed_windows']=speed_vars
+        for key,(title,hours) in SPEED_WINDOWS.items():
+            ttk.Checkbutton(speed_choices,text=title,variable=speed_vars[key],style='Meter.TCheckbutton').pack(side='left',padx=(0,18))
+        self.label(speed_box,'Only checked windows run on the next refresh. Uncheck all to skip speed scans.',9,anchor='w',wraplength=SETTINGS_WRAP,justify='left').pack(fill='x',pady=(5,0))
+        self.label(box,'Reserve adjustment (tokens)',11,anchor='w').grid(row=4,column=0,sticky='w',pady=6)
+        ttk.Entry(box,textvariable=r,width=21,font=('Segoe UI',10),style='Meter.TEntry').grid(row=4,column=1,padx=(20,0))
         reserve_help=(
             'Manual correction for missing reserve tokens. Added once to all-time '
             'tokens while a GPT account is enabled. Monthly tokens and costs are '
             'unchanged. Set 0 for no adjustment.'
         )
-        self.label(box,reserve_help,10,anchor='w',wraplength=SETTINGS_WRAP,justify='left').grid(row=4,column=0,columnspan=2,sticky='w',pady=8)
+        self.label(box,reserve_help,10,anchor='w',wraplength=SETTINGS_WRAP,justify='left').grid(row=5,column=0,columnspan=2,sticky='w',pady=8)
         def toggle(identity,variable):
             updated=dict(self.settings);disabled=set(updated.get('disabled_sources',[]))
             if variable.get(): disabled.discard(identity)
@@ -1160,6 +1219,14 @@ class App:
             self.render_results()
         for identity,variable in account_vars.items():
             traces.append((variable,variable.trace_add('write',lambda *args,identity=identity,variable=variable:toggle(identity,variable))))
+        def toggle_speed(*args):
+            updated={**self.settings,'speed_windows':[key for key,variable in speed_vars.items() if variable.get()]}
+            try: save(CONFIG,updated)
+            except OSError as exc:
+                self.status.config(text='Could not save settings');self.status_detail=str(exc);return
+            self.settings=updated;self.render_results('speed')
+        for variable in speed_vars.values():
+            traces.append((variable,variable.trace_add('write',toggle_speed)))
         def commit(close=False,quiet=False):
             if self.settings_save_job is not None:
                 self.root.after_cancel(self.settings_save_job);self.settings_save_job=None
@@ -1193,8 +1260,8 @@ class App:
         traces.append((r,r.trace_add('write',delayed)))
         self.close_settings=lambda:commit(close=True)
         win.protocol('WM_DELETE_WINDOW',self.close_settings)
-        ttk.Button(box,text='Save',command=self.close_settings,style='Meter.TButton').grid(row=5,column=1,sticky='e',pady=(10,0))
-        about=tk.Frame(box,bg=self.bg);about.grid(row=6,column=0,columnspan=2,sticky='ew')
+        ttk.Button(box,text='Save',command=self.close_settings,style='Meter.TButton').grid(row=6,column=1,sticky='e',pady=(10,0))
+        about=tk.Frame(box,bg=self.bg);about.grid(row=7,column=0,columnspan=2,sticky='ew')
         self.build_about(about)
         win.update_idletasks()
         win.geometry(f'+{max(0,min(self.root.winfo_rootx()+20,win.winfo_screenwidth()-win.winfo_reqwidth()))}+'
@@ -1239,6 +1306,7 @@ class App:
         if self.job: self.root.after_cancel(self.job);self.job=None
         self.usage_baseline=dict(self.data['usage']) if 'usage' in self.data else None
         self.scan_homes=enabled_homes(settings=self.settings)
+        self.scan_speed_windows=selected_speed_windows(self.settings)
         self.busy=True; self.refresh_started=time.monotonic(); self.pending={'usage','limits','speed'}
         self.refresh_errors=[]; self.refresh_notes=[]; self.refresh_timings={}
         self.status.config(text='Refreshing…')
@@ -1250,7 +1318,9 @@ class App:
             try: return name,fn(),None,time.monotonic()-started
             except Exception as exc: return name,None,str(exc).replace('\n',' ')[:180],time.monotonic()-started
         with ThreadPoolExecutor(max_workers=3) as pool:
-            futures=[pool.submit(scan,name,lambda fn=fn:fn(self.scan_homes)) for name,fn in [('usage',get_usage),('limits',get_limits),('speed',get_speed)]]
+            jobs=[('usage',lambda:get_usage(self.scan_homes)),('limits',lambda:get_limits(self.scan_homes)),
+                  ('speed',lambda:get_speed(self.scan_homes,self.scan_speed_windows))]
+            futures=[pool.submit(scan,name,fn) for name,fn in jobs]
             for future in as_completed(futures): self.results.put(future.result())
     def check_results(self):
         if self.closed: return
@@ -1261,6 +1331,9 @@ class App:
             if error: self.refresh_errors.append(name+': '+error)
             else:
                 if name=='speed': value,note=value; self.refresh_notes.extend([note] if note else [])
+                enabled_ids={source_id(home) for home in self.scan_homes}
+                if name in ('speed','limits'):
+                    value=merge_cached_sources(self.data.get(name),value,enabled_ids,self.scan_speed_windows if name=='speed' else None)
                 if name=='limits' and value.get('errors'):
                     self.refresh_errors.append('limits: Account or limits unavailable for '+', '.join(value['errors']))
                 if name=='usage':
@@ -1272,6 +1345,9 @@ class App:
                         order={source_id(home):index for index,home in enumerate(self.scan_homes)}
                         sources=sorted(value['sources']+cached,key=lambda item:order.get(item['source'],len(order)))
                         value={**value,**combined_usage(sources,value['month'])}
+                    value=merge_cached_sources(self.usage_baseline,value,enabled_ids)
+                    if 'sources' in value:
+                        value={**value,**combined_usage(value['sources'],value['month'])}
                     apply_usage_result(self.data,value,self.usage_baseline,time.time())
                     for item in failed:
                         if not any(row['source']==item['source'] for row in self.data['delta_sources']):
@@ -1513,7 +1589,8 @@ def worker_main():
                 futures=[pool.submit(measure,name,fn) for name,fn in [('usage',get_usage),('limits',get_limits),('speed',get_speed)]]
                 for future in as_completed(futures):
                     name,result=future.result(); value[name]=result
-        elif args[0]=='--speed-all': value=scan_speed([Path(home) for home in json.loads(args[1])] if len(args)>1 else None)
+        elif args[0]=='--speed-all': value=scan_speed([Path(home) for home in json.loads(args[1])] if len(args)>1 else None,
+                                                       json.loads(args[2]) if len(args)>2 else None)
         elif args[0]=='--speed-batch': value=speed_batch(args[1])
         else:
             script=args[1]; sys.argv=[script]+args[2:]

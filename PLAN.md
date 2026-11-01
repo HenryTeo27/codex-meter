@@ -1,5 +1,23 @@
 # Codex Meter plan and completion notes
 
+## Selectable speed windows — 2026-11-01
+
+1. Save independent 4-hour, 1-day and 14-day switches. Default to 4 hours and 1 day, including existing installations without this setting.
+2. Capture enabled accounts and speed windows together at refresh start. Manual and automatic refresh use this same selection. Changes during a scan apply to the next scan.
+3. Parse each enabled account once. Read only logs within the longest selected window. Compute only selected reports; skip the speed worker and tool download when none are selected.
+4. Hide disabled tables without rebuilding the page. Keep cached results until a selected window refreshes. Preserve disabled account results without reading their logs or querying their account.
+5. Verify saved switches, worker arguments, exact rolling cutoffs, all-off behavior and changes between consecutive refreshes with isolated backend and withdrawn-window tests.
+6. Update English usage documentation, build the Windows package, verify it without opening desktop windows, and publish the release.
+
+Implementation and verification:
+
+- Added saved window checkboxes and a default 4-hour / 1-day selection. Both refresh paths capture account and window choices at scan start.
+- Kept one parse per enabled account. The longest checked window sets the log-file cutoff. No checked windows means no speed process or tool download.
+- Preserved the latest cached results for disabled accounts and unchecked windows. New empty results replace old results for refreshed windows.
+- Passed the isolated backend and withdrawn-window suite, including selection changes during a refresh, all-off behavior, rolling cutoffs and account skips.
+- A real scan of two enabled local accounts returned both default windows in 18.78 seconds. No desktop window was opened.
+- Built v1.1.6. The packaged runtime, two-process quit/reopen check, automatic scheduling check and update archive check passed.
+
 - [x] Native compact Windows window, tray open/refresh/quit, single-instance reopening.
 - [x] Remaining Codex allowance; current-month and all-time tokens and USD estimates.
 - [x] Configurable all-time reserve adjustment; token delta from last successful usage scan.

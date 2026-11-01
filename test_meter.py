@@ -174,7 +174,7 @@ class SettingsTests(InvisibleGuiTests):
                 reserve=next(widget for widget in widgets if isinstance(widget,meter.ttk.Entry) and not isinstance(widget,meter.ttk.Combobox))
                 interval.set('4 hours');reserve.delete(0,'end');reserve.insert(0,'1,234')
                 next(widget for widget in widgets if isinstance(widget,meter.ttk.Button) and widget.cget('text')=='Save').invoke()
-                self.assertEqual(app.settings,{'interval':4,'reserve':1234,'appearance':'system'})
+                self.assertEqual(app.settings,{'interval':4,'reserve':1234,'appearance':'system','speed_windows':['4h','1']})
                 self.assertEqual(meter.read(meter.CONFIG,{}),app.settings)
                 self.assertIsNotNone(app.job)
             finally:
@@ -296,7 +296,7 @@ class SpeedBatchTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             home=Path(tmp);(home/'sessions').mkdir()
             with patch.object(meter,'codex_homes',return_value=[home]), patch.object(meter.importlib.util,'spec_from_file_location',return_value=spec), patch.object(meter.importlib.util,'module_from_spec',return_value=engine):
-                result=meter.speed_batch('test-engine.py')
+                result=meter.speed_batch('test-engine.py',windows=['1','14'])
         self.assertEqual(calls,[1,2,1,2])
         self.assertEqual(result['1'][0]['ratio'],'2.00×')
         self.assertEqual(result['14'][0]['normal'],'10.0')

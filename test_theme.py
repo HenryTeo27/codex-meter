@@ -22,7 +22,8 @@ class ThemeTests(unittest.TestCase):
             app=meter.App()
             try:
                 app.root.update_idletasks()
-                end=app.day1_grid.winfo_y()+app.day1_grid.winfo_reqheight()
+                first=app.content_widgets['periods']['4h']
+                end=first.winfo_y()+first.winfo_reqheight()
                 extra=app.compact_requested_height-app.root.winfo_height()
                 self.assertEqual(app.canvas.winfo_height()+extra,end+8)
                 self.assertLess(app.compact_requested_height,690)

@@ -29,11 +29,13 @@ if sys.argv[1]=='write':
     app.settings_vars['appearance'].set('Dark')
     app.settings_vars['interval'].set('30 minutes')
     app.settings_vars['reserve'].set('321')
+    app.settings_vars['speed_windows']['4h'].set(False)
+    app.settings_vars['speed_windows']['14'].set(True)
     # Deliberately quit without pressing Save or waiting for the edit debounce.
     app.busy=True
     app.quit()
 else:
-    assert app.settings=={'appearance':'dark','interval':0.5,'reserve':321},app.settings
+    assert app.settings=={'appearance':'dark','interval':0.5,'reserve':321,'speed_windows':['1','14']},app.settings
     assert app.data['usage']['total_tokens']==1000
     assert app.data['speed']=={'1':[],'14':[]}
     assert app.data['delta']==20
@@ -46,6 +48,8 @@ else:
     labels=[widget.cget('text') for widget in descendants(app.body) if isinstance(widget,meter.tk.Label)]
     assert '1,321' in labels,labels
     app.settings_dialog()
+    assert not app.settings_vars['speed_windows']['4h'].get()
+    assert app.settings_vars['speed_windows']['1'].get() and app.settings_vars['speed_windows']['14'].get()
     labels=[widget.cget('text') for widget in descendants(app.settings_window) if isinstance(widget,meter.tk.Label)]
     assert 'Sources & components' not in labels
     app.settings_vars['appearance'].set('Light')
