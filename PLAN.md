@@ -1,5 +1,15 @@
 # Codex Meter plan and completion notes
 
+## App update triggers — 2026-11-01
+
+- Keep the 6-hour background check and 1-hour retry after errors.
+- Add a startup activity check, including hidden launches. Check after restoring, opening the existing window or returning focus.
+- Share the existing 1-hour activity cooldown with data refresh. Skip duplicate checks while downloading or awaiting installation.
+- Preserve the hidden-idle installation rule and pre-window installation of a verified pending update.
+- Verify startup, restore, cooldown, clock changes and overlap without desktop interaction. Build and publish v1.1.7 after Windows CI passes.
+
+Verification: deterministic clock tests passed for startup before the periodic deadline, shared cooldown, duplicate suppression and clock rollback. A withdrawn real Tk event loop also confirmed startup and restore checks without mapping a window. The existing hidden-idle installation and offline startup recovery tests remain in place.
+
 ## Selectable speed windows — 2026-11-01
 
 1. Save independent 4-hour, 1-day and 14-day switches. Default to 4 hours and 1 day, including existing installations without this setting.

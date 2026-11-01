@@ -151,6 +151,85 @@ class ApplyPolicyTests(unittest.TestCase):
         app.check_app_updates.assert_not_called()
         with patch.object(meter.time,'time',return_value=13600): app.check_app_updates_on_activity()
         app.check_app_updates.assert_called_once()
+
+    def test_startup_checks_before_the_six_hour_background_deadline(self):
+        from test_schedule import Clock,Root
+        clock=Clock();root=Root(clock);app=meter.App.__new__(meter.App)
+        app.root=root;app.data={'app_update_check':{'checked_at':clock.wall-2*3600}}
+        app.closed=False;app.app_update_job=None;app.app_update_running=False;app.pending_app_update=None
+        def checked(): app.data['app_update_check']={'checked_at':clock.wall,'retry':False}
+        app.check_app_updates=Mock(side_effect=checked)
+        with patch.object(meter.time,'time',lambda:clock.wall),patch.object(updater,'installed_root',return_value=Path('installed')):
+            app.schedule_app_update_check(startup=True)
+            root.advance(1);app.check_app_updates.assert_not_called()
+            root.advance(0.5);app.check_app_updates.assert_called_once()
+            # Another cold start shortly after this check shares its saved cooldown.
+            app.schedule_app_update_check(startup=True);root.advance(2)
+            app.check_app_updates.assert_called_once()
+            root.advance(6*3600-2);self.assertEqual(app.check_app_updates.call_count,2)
+
+    def test_restore_focus_and_open_share_one_activity_cooldown(self):
+        from types import SimpleNamespace
+        app=meter.App.__new__(meter.App);app.root=Mock();app.root.state.return_value='normal'
+        app.settings={'interval':0};app.busy=False;app.closed=False;app.dirty=False;app._show_job=None
+        app.app_update_root=Path('installed');app.app_update_running=False;app.pending_app_update=None
+        app.data={'app_update_check':{'checked_at':10000}}
+        app.configure_window=Mock();app.publish_ready=Mock();app.sync_theme=Mock()
+        def checked(): app.data['app_update_check']={'checked_at':meter.time.time()}
+        app.check_app_updates=Mock(side_effect=checked)
+        with patch.object(meter.time,'time',return_value=13600),patch.object(meter,'system_dark',return_value=False):
+            app.on_map(SimpleNamespace(widget=app.root))
+            app.on_focus(SimpleNamespace(widget=app.root));app.show();app.check_app_updates_on_activity()
+        app.check_app_updates.assert_called_once()
+        with patch.object(meter.time,'time',return_value=17199): app.on_focus(SimpleNamespace(widget=app.root))
+        app.check_app_updates.assert_called_once()
+        with patch.object(meter.time,'time',return_value=17200): app.on_focus(SimpleNamespace(widget=app.root))
+        self.assertEqual(app.check_app_updates.call_count,2)
+
+    def test_activity_skips_closed_running_pending_and_development_apps(self):
+        app=meter.App.__new__(meter.App);app.data={};app.app_update_root=Path('installed')
+        app.closed=False;app.app_update_running=False;app.pending_app_update=None;app.check_app_updates=Mock()
+        for key,value in [('closed',True),('app_update_running',True),('pending_app_update',('9.0.0',Path('stage'))),('app_update_root',None)]:
+            before=getattr(app,key);setattr(app,key,value)
+            app.check_app_updates_on_activity();app.check_app_updates.assert_not_called();setattr(app,key,before)
+        app.root=Mock();app.app_update_job=None
+        with patch.object(updater,'installed_root',return_value=None): app.schedule_app_update_check(startup=True)
+        app.root.after.assert_not_called()
+
+    def test_activity_recovers_from_a_future_saved_check_timestamp(self):
+        app=meter.App.__new__(meter.App);app.app_update_root=Path('installed');app.check_app_updates=Mock()
+        app.data={'app_update_check':{'checked_at':20000}}
+        with patch.object(meter.time,'time',return_value=10000): app.check_app_updates_on_activity()
+        app.check_app_updates.assert_called_once()
+
+    def test_hidden_startup_and_restore_use_the_real_event_loop(self):
+        from types import SimpleNamespace
+        meter.load_gui()
+        with tempfile.TemporaryDirectory() as folder:
+            data=Path(folder);calls=[]
+            def checked(app):
+                calls.append(time.time());app.data['app_update_check']={'checked_at':time.time(),'retry':False}
+            with patch.object(meter,'DATA',data),patch.object(meter,'CONFIG',data/'settings.json'), \
+                 patch.object(meter,'SNAPSHOT',data/'snapshot.json'), \
+                 patch.object(updater,'installed_root',return_value=data),patch.object(updater,'configure_logon_resume'), \
+                 patch.object(meter.App,'show'),patch.object(meter.App,'setup_tray'),patch.object(meter.App,'publish_ready'), \
+                 patch.object(meter.App,'check_app_updates',checked):
+                meter.save(meter.CONFIG,{'interval':0})
+                meter.save(meter.SNAPSHOT,{'app_update_check':{'checked_at':time.time()-2*3600}})
+                app=meter.App()
+                try:
+                    self.assertEqual(calls,[])
+                    app.root.after(1800,app.root.quit);app.root.mainloop()
+                    self.assertEqual(len(calls),1)
+                    app.on_focus(SimpleNamespace(widget=app.root));self.assertEqual(len(calls),1)
+                    app.data['app_update_check']['checked_at']=time.time()-3600
+                    app.on_map(SimpleNamespace(widget=app.root));self.assertEqual(len(calls),2)
+                    app.on_focus(SimpleNamespace(widget=app.root));self.assertEqual(len(calls),2)
+                    self.assertEqual(app.root.state(),'withdrawn')
+                finally:
+                    app.closed=True
+                    for job in app.root.tk.splitlist(app.root.tk.call('after','info')): app.root.after_cancel(job)
+                    app.root.destroy()
     def test_ready_marker_confirms_the_version_and_process(self):
         with tempfile.TemporaryDirectory() as folder:
             data=Path(folder);stage=data/'updates'/('update-'+uuid.uuid4().hex);stage.mkdir(parents=True)

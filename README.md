@@ -65,7 +65,9 @@ For an existing source checkout, run `git remote set-url origin https://github.c
 
 ## Automatic app updates
 
-An installed app checks for a stable release about every 6 hours. Refresh also checks when at least 1 hour has passed since the last check. A failed check retries after 1 hour. Downloads receive a SHA-256 check and a hidden startup check. Settings and the latest results are saved before installation. Once the window is hidden in the tray and its refresh finishes, the update installs and restarts in the tray. Quitting with a ready update installs it and leaves the app closed.
+An installed app checks for a stable release about every 6 hours. Starting the app, restoring it from the tray, opening an existing window from the desktop shortcut, returning focus and refreshing data also trigger a check when at least 1 hour has passed since the last completed check. These events share the same cooldown. Repeated clicks do not start concurrent checks or duplicate downloads. Hidden launches receive a startup check too. Checks run in a background worker; opening the app does not wait for the network. A failed check retries after 1 hour.
+
+Downloads receive a SHA-256 check and a hidden startup check. Settings and the latest results are saved before installation. Once the window is hidden in the tray and its refresh finishes, the update installs and restarts in the tray. Quitting with a ready update installs it and leaves the app closed.
 
 The verified archive is saved until installation. If Windows restarts first, a one-time sign-in entry resumes the update and returns the app to the tray. Opening the app also installs a saved update before showing the window. No general Windows autostart is enabled. The status tooltip shows update errors or when an update is ready.
 

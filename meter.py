@@ -41,7 +41,7 @@ VENDOR = SPEED.parent / 'vendor'
 UPSTREAM = 'https://gist.githubusercontent.com/pszemraj/f8fe69ff5002c3bd0825edfd02001635/raw/codex_speed.py'
 CREATE = 0x08000000 if os.name == 'nt' else 0
 PYTHON = str(Path(sys.executable).with_name('python.exe')) if Path(sys.executable).name.lower() == 'pythonw.exe' else sys.executable
-VERSION = '1.1.6'
+VERSION = '1.1.7'
 REPOSITORY = 'https://github.com/HenryTeo27/codex-meter'
 CONTENT_PAD = 28
 SETTINGS_WRAP = 450
@@ -53,6 +53,8 @@ DEADLINE_CHECK_MS = 60000
 APP_UPDATE_INTERVAL = 6*3600
 APP_UPDATE_RETRY = 3600
 APP_UPDATE_DEADLINE_CHECK = 3600
+APP_UPDATE_ACTIVITY_INTERVAL = 3600
+APP_UPDATE_STARTUP_DELAY_MS = 1500
 CACHED_SPEED = DATA / 'tools' / 'codex_speed.py'
 
 ACTIVE_PROCESSES = set()
@@ -728,7 +730,7 @@ class App:
         self.signal_update_ready()
         if app_updater.ready_update(DATA,VERSION) is None:
             app_updater.configure_logon_resume(__file__,sys.executable,getattr(sys,'frozen',False),DATA,False)
-        self.schedule_app_update_check()
+        self.schedule_app_update_check(startup=True)
         if '--start-hidden' not in sys.argv: self.show()
     def configure_window(self):
         """Use native styles, without installing Python callbacks in the window procedure."""
@@ -1397,12 +1399,13 @@ class App:
                 save(marker,{'version':VERSION,'pid':os.getpid()})
         except (OSError,IndexError,ValueError): pass
 
-    def schedule_app_update_check(self):
+    def schedule_app_update_check(self,startup=False):
         if self.app_update_job is not None:
             self.root.after_cancel(self.app_update_job);self.app_update_job=None
         target=app_updater.installed_root(__file__,sys.executable,getattr(sys,'frozen',False),DATA)
         self.app_update_root=target
         if target is None or self.closed or self.app_update_running or self.pending_app_update is not None: return
+        if startup: self.root.after(APP_UPDATE_STARTUP_DELAY_MS,self.check_app_updates_on_activity)
         delay=max(15,min(APP_UPDATE_DEADLINE_CHECK,self.app_update_due()-time.time()))
         self.app_update_job=self.root.after(round(delay*1000),self.app_update_tick)
 
@@ -1436,11 +1439,12 @@ class App:
         self.root.after(1000,self.poll_app_update)
 
     def check_app_updates_on_activity(self):
-        if not getattr(self,'app_update_root',None): return
+        if (not getattr(self,'app_update_root',None) or getattr(self,'closed',False)
+                or getattr(self,'app_update_running',False) or getattr(self,'pending_app_update',None) is not None): return
         previous=self.data.get('app_update_check',{})
         checked=previous.get('checked_at',0) if isinstance(previous,dict) else 0
         if type(checked) not in (int,float) or not math.isfinite(checked): checked=0
-        if checked>time.time() or time.time()-checked>=3600: self.check_app_updates()
+        if checked>time.time() or time.time()-checked>=APP_UPDATE_ACTIVITY_INTERVAL: self.check_app_updates()
 
     def poll_app_update(self):
         if self.closed: return
@@ -1492,12 +1496,13 @@ class App:
             self.configure_window()
             if self.dirty: self.update_content();self.dirty=False
             self.publish_ready()
+            self.check_app_updates_on_activity()
             if self._show_job is None: self._show_job=self.root.after_idle(self.reveal)
     def on_focus(self,event):
         if event.widget is self.root and not self.busy and self.settings['interval']:
             self.schedule()
         if event.widget is self.root and getattr(self,'app_update_root',None):
-            self.schedule_app_update_check()
+            self.check_app_updates_on_activity()
     def reveal(self):
         self._show_job=None
         if not self.closed and self.root.state() in ('normal','zoomed'):
@@ -1523,6 +1528,7 @@ class App:
         self.maybe_apply_app_update()
     def show(self):
         self.sync_theme(system_dark())
+        self.check_app_updates_on_activity()
         if not self.busy and self.settings['interval']: self.schedule()
         if self.dirty: self.update_content(); self.dirty=False
         if self.root.state() in ('withdrawn','iconic'): self.root.deiconify()
