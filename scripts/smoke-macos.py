@@ -2,6 +2,9 @@
 import json,os,subprocess,tempfile
 from pathlib import Path
 root=Path(__file__).resolve().parents[1]
+import sys,platform
+sys.path.insert(0,str(root))
+import mac_updater,meter
 executable=root/'dist/CodexMeter.app/Contents/MacOS/CodexMeter'
 with tempfile.TemporaryDirectory() as folder:
     folder=Path(folder);output=folder/'health.json';env={**os.environ,'CODEX_METER_DATA_DIR':str(folder/'state')}
@@ -26,3 +29,6 @@ print('macOS hidden UI and persistence passed')
     subprocess.run([str(executable),'--speed-worker',str(script),'--worker-output',str(output)],env=env,check=True,timeout=45)
     result=json.loads(output.read_text());assert result['ok'],result
     print(result['value'])
+    extracted=mac_updater.unpack(root/'release'/mac_updater.ARCHIVE,folder/'update',meter.VERSION)
+    subprocess.run([str(extracted),'--health-check','--worker-output',str(output)],env=env,check=True,timeout=45)
+    assert json.loads(output.read_text())['ok']

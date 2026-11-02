@@ -77,7 +77,7 @@ def validate_archive(archive):
                 target=posixpath.normpath(posixpath.join(posixpath.dirname(name),link))
                 if link.startswith('/') or not target.startswith(BUNDLE+'/'): raise ValueError('Unsafe bundle link')
         # Reject children under any archived link; extraction must not follow aliases.
-        links={i.filename.rstrip('/') for i in bundle.infolist() if stat.S_ISLNK(i.external_attr>>16)}
+        links={i.orig_filename.rstrip('/').casefold() for i in bundle.infolist() if stat.S_ISLNK(i.external_attr>>16)}
         if any(any(name.startswith(link+'/') for link in links) for name in seen):
             raise ValueError('Archive writes through a link')
 
