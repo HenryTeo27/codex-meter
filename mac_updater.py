@@ -66,7 +66,7 @@ def validate_archive(archive):
                 seen.add(name.casefold());total+=item.file_size
                 if total>base.MAX_EXTRACTED: raise ValueError('Bundle too large')
                 continue
-            if not name or name.split('/')[0]!=BUNDLE or any(p in ('','..','.') for p in name.split('/')) or '\\' in name:
+            if not name or name.split('/')[0]!=BUNDLE or any(p in ('','..','.') for p in name.split('/')) or chr(92) in name:
                 raise ValueError('Unsafe bundle path')
             key=name.casefold()
             if key in seen: raise ValueError('Duplicate bundle path')

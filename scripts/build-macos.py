@@ -19,7 +19,9 @@ subprocess.run([sys.executable,'-m','PyInstaller','--noconfirm','--clean','--win
     '--collect-all','rich','--collect-all','joblib','--collect-all','tzdata',
     '--hidden-import','pystray._darwin','--hidden-import','orjson','--hidden-import','zoneinfo',
     '--hidden-import','statistics','--hidden-import','csv','--hidden-import','gzip',
-    '--hidden-import','argparse','--hidden-import','dataclasses',str(root/'meter.py')],cwd=root,check=True)
+    '--hidden-import','argparse','--hidden-import','dataclasses',
+    '--exclude-module','numpy','--exclude-module','pandas','--exclude-module','scipy',
+    '--exclude-module','matplotlib','--exclude-module','IPython','--exclude-module','pytest',str(root/'meter.py')],cwd=root,check=True)
 bundle=root/'dist/CodexMeter.app';info=bundle/'Contents/Info.plist'
 with info.open('rb') as stream: metadata=plistlib.load(stream)
 metadata.update(CFBundleShortVersionString=meter.VERSION,CFBundleVersion=meter.VERSION,CFBundleDisplayName='Codex Meter')

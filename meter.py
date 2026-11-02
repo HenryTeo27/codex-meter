@@ -104,7 +104,7 @@ def load_gui():
             from tkinter import font as tkfont
             self.app=app;self.text_value='';self.rows=[];self.value_font=font;self.value_color=color
             super().__init__(parent,bg=app.bg,bd=0)
-            self.tag_font=tkfont.Font(root=app.root,font=('Segoe UI Semibold',8))
+            self.tag_font=tkfont.Font(root=app.root,font=(UI_FONT if sys.platform=='darwin' else 'Segoe UI Semibold',8))
             self.tag_width=self.tag_font.measure('GPT2')+12
             self.tag_height=self.tag_font.metrics('linespace')+2
             self.configure(text='')
