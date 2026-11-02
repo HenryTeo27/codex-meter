@@ -7,7 +7,7 @@ A small Windows and macOS desktop meter for Codex usage and speed. Close it to t
   <img src="docs/screenshot-light.png" alt="Codex Meter in light mode" width="48%">
 </p>
 
-*Codex Meter in dark and light mode.*
+*Current Windows interface in dark and light mode, with 4-hour and 1-day speed sections.*
 
 The current interface uses slightly larger text and wider outer padding. The window starts at 500 pixels wide and fits the first selected speed table with a little bottom space. Scroll down to see the other selected windows. Refresh does not resize the window. Side margins remain 28 pixels; muted gray window controls stay flush with the top-right edge. Period headings are plain text, without background boxes. The window uses a larger corner radius.
 
