@@ -1,11 +1,16 @@
 """Windows app-theme preference, with an idle registry-notification listener."""
 import os
 import threading
+import sys
 
 PERSONALIZE = r'Software\Microsoft\Windows\CurrentVersion\Themes\Personalize'
+_MAC_OBSERVER=None
 
 
 def system_dark(value='AppsUseLightTheme'):
+    if sys.platform=='darwin':
+        from Foundation import NSUserDefaults
+        return NSUserDefaults.standardUserDefaults().stringForKey_('AppleInterfaceStyle')=='Dark'
     if os.name != 'nt': return False
     import winreg
     try:
@@ -24,6 +29,18 @@ class ThemeWatcher:
         self.stop_event = self.change_event = None
 
     def start(self):
+        if sys.platform=='darwin':
+            global _MAC_OBSERVER
+            from Foundation import NSObject,NSDistributedNotificationCenter
+            if _MAC_OBSERVER is None:
+                class MeterAppearanceObserver(NSObject):
+                    def appearanceChanged_(self,notification): self.callback(system_dark())
+                _MAC_OBSERVER=MeterAppearanceObserver
+            self.observer=_MAC_OBSERVER.alloc().init();self.observer.callback=self.callback
+            self.center=NSDistributedNotificationCenter.defaultCenter()
+            self.center.addObserver_selector_name_object_(self.observer,'appearanceChanged:',
+                                                         'AppleInterfaceThemeChangedNotification',None)
+            self.ready.set();return
         self.thread = threading.Thread(target=self.watch, daemon=True, name='system-theme')
         self.thread.start()
 
@@ -61,6 +78,8 @@ class ThemeWatcher:
 
     def stop(self):
         self.closed.set()
+        if hasattr(self,'observer'):
+            self.center.removeObserver_(self.observer);self.observer=None
         if self.stop_event:
             import ctypes
             from ctypes import wintypes

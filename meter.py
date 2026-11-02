@@ -9,6 +9,10 @@ import sys, os, json, subprocess, threading, tempfile, re, time, shutil, math
 from pathlib import Path
 from datetime import datetime
 import app_updater
+if sys.platform=='darwin':
+    import mac_support
+    mac_support.configure_path()
+    import mac_updater as app_updater
 from sources import codex_homes, source_id, source_label, read_auth_mode, account_names
 from system_theme import system_dark, ThemeWatcher
 ROOT = Path(getattr(sys, '_MEIPASS', Path(__file__).resolve().parent))
@@ -19,6 +23,7 @@ def state_directory():
     """Resolve the same per-user folder from Explorer, terminals and packaged runs."""
     if os.environ.get('CODEX_METER_DATA_DIR'):
         return Path(os.environ['CODEX_METER_DATA_DIR']).expanduser().resolve()
+    if sys.platform=='darwin': return Path.home()/'Library/Application Support/CodexMeter'
     if os.name=='nt':
         import ctypes,uuid
         from ctypes import wintypes
@@ -41,7 +46,9 @@ VENDOR = SPEED.parent / 'vendor'
 UPSTREAM = 'https://gist.githubusercontent.com/pszemraj/f8fe69ff5002c3bd0825edfd02001635/raw/codex_speed.py'
 CREATE = 0x08000000 if os.name == 'nt' else 0
 PYTHON = str(Path(sys.executable).with_name('python.exe')) if Path(sys.executable).name.lower() == 'pythonw.exe' else sys.executable
-VERSION = '1.1.7'
+VERSION = '1.2.0'
+UI_FONT = 'Helvetica Neue' if sys.platform=='darwin' else 'Segoe UI'
+MONO_FONT = 'Menlo' if sys.platform=='darwin' else 'Consolas'
 REPOSITORY = 'https://github.com/HenryTeo27/codex-meter'
 CONTENT_PAD = 28
 SETTINGS_WRAP = 450
@@ -167,7 +174,11 @@ def terminate_process(process):
     if os.name == 'nt':
         subprocess.run(['taskkill','/PID',str(process.pid),'/T','/F'],capture_output=True,
                        creationflags=CREATE,timeout=10)
-    else: process.kill()
+    else:
+        import signal
+        os.killpg(process.pid,signal.SIGTERM)
+        try: process.wait(timeout=3)
+        except subprocess.TimeoutExpired: os.killpg(process.pid,signal.SIGKILL)
 
 
 def cancel_scans():
@@ -383,7 +394,7 @@ def run(args, timeout=180, env=None):
         if STOP_EVENT.is_set(): raise RuntimeError('Refresh cancelled')
         process=subprocess.Popen(args,stdout=subprocess.PIPE,stderr=subprocess.PIPE,
                                  text=True,encoding='utf-8',errors='replace',env=env,
-                                 creationflags=CREATE)
+                                 creationflags=CREATE,start_new_session=os.name!='nt')
         ACTIVE_PROCESSES.add(process)
     try:
         try: stdout,stderr=process.communicate(timeout=timeout)
@@ -425,6 +436,11 @@ def find_codex():
     if override and Path(override).is_file(): return override
     executable=shutil.which('codex.exe') or shutil.which('codex')
     if executable: return executable
+    if sys.platform=='darwin':
+        for base in (Path('/Applications'),Path.home()/'Applications'):
+            for relative in ('Codex.app/Contents/Resources/codex','Codex.app/Contents/Resources/bin/codex'):
+                candidate=base/relative
+                if candidate.is_file(): return str(candidate)
     folder=Path(os.environ.get('LOCALAPPDATA',''))/'OpenAI/Codex/bin'
     choices=list(folder.glob('*/codex.exe'))
     if choices: return str(max(choices,key=lambda path:path.stat().st_mtime))
@@ -543,7 +559,7 @@ def resume_app_update_before_window():
     try:
         result=get_app_update(resume_only=True)
         if not result['candidate']: return False
-        app_updater.start_installer(result['stage'],target,DATA,ROOT/'scripts/apply-update.ps1',
+        app_updater.start_installer(result['stage'],target,DATA,ROOT/'scripts'/('apply-update-macos.sh' if sys.platform=='darwin' else 'apply-update.ps1'),
                                    result['candidate']['version'],1 if '--start-hidden' in sys.argv else 2)
         return True
     except (OSError,ValueError,RuntimeError,KeyError,TypeError): return False
@@ -680,7 +696,7 @@ class Tooltip:
         self.popup.overrideredirect(True)
         self.popup.attributes('-topmost', True)
         tk.Label(self.popup, text=self.text() if callable(self.text) else self.text, bg='#202224', fg='#ffffff',
-                 font=('Segoe UI', 10), padx=12, pady=9, justify='left').pack()
+                 font=(UI_FONT, 10), padx=12, pady=9, justify='left').pack()
         self.popup.update_idletasks()
         x = min(self.widget.winfo_pointerx()+12, self.popup.winfo_screenwidth()-self.popup.winfo_reqwidth()-12)
         y = min(self.widget.winfo_pointery()+18, self.popup.winfo_screenheight()-self.popup.winfo_reqheight()-12)
@@ -718,7 +734,12 @@ class App:
         self.root=tk.Tk(); self.root.withdraw(); self.root.attributes('-alpha',0)
         self.root.title('Codex Meter'); self.root.geometry('500x520'); self.root.minsize(460,360); self.root.configure(bg=self.color('#ffffff'))
         self.configure_ttk()
-        self.root.iconbitmap(str(ROOT/'assets/codex-gradient.ico'))
+        if sys.platform=='darwin':
+            self.window_icon=ImageTk.PhotoImage(load_icon(128),master=self.root)
+            self.root.iconphoto(True,self.window_icon)
+            self.root.createcommand('::tk::mac::ReopenApplication',self.show)
+            self.root.createcommand('::tk::mac::Quit',self.quit)
+        else: self.root.iconbitmap(str(ROOT/'assets/codex-gradient.ico'))
         self.root.protocol('WM_DELETE_WINDOW',self.hide)
         self.root.bind('<Map>',self.on_map)
         self.root.bind('<Configure>',self.update_window_shape)
@@ -832,6 +853,8 @@ class App:
         self._drag_origin=None
 
     def toggle_maximize(self):
+        if sys.platform=='darwin':
+            self.root.attributes('-fullscreen',not self.root.attributes('-fullscreen'));return
         self.root.state('normal' if self.root.state()=='zoomed' else 'zoomed')
 
     def set_native_icons(self,widget=None):
@@ -881,9 +904,9 @@ class App:
                             bordercolor=border,lightcolor=border,darkcolor=border,arrowcolor=fg)
             style.map(name,fieldbackground=[('readonly',bg)],foreground=[('readonly',fg)],
                       selectbackground=[('!disabled',hover)],selectforeground=[('!disabled',fg)])
-        style.configure('Meter.TButton',font=('Segoe UI',10),padding=(10,4),background=bg,foreground=fg,
+        style.configure('Meter.TButton',font=(UI_FONT,10),padding=(10,4),background=bg,foreground=fg,
                         bordercolor=border,lightcolor=border,darkcolor=border)
-        style.configure('Meter.TCheckbutton',font=('Segoe UI',10),background=bg,foreground=fg)
+        style.configure('Meter.TCheckbutton',font=(UI_FONT,10),background=bg,foreground=fg)
         style.map('Meter.TCheckbutton',background=[('active',bg)],foreground=[('active',fg)])
         style.configure('ComboboxPopdownFrame',background=bg,bordercolor=border)
         style.map('Meter.TButton',background=[('active',hover),('pressed',hover)],foreground=[('active',fg)])
@@ -946,12 +969,12 @@ class App:
         head=tk.Frame(self.root,bg=bg); head.pack(fill='x',padx=0,pady=(0,14))
         controls=tk.Frame(head,bg=bg);controls.pack(side='right',anchor='n')
         for kind,cmd,tip in [('close',self.hide,'Hide to tray'),('maximize',self.toggle_maximize,'Maximize / restore'),('minimize',self.root.iconify,'Minimize')]:
-            self.window_button(controls,kind,cmd,tip).pack(side='right')
+            if sys.platform!='darwin': self.window_button(controls,kind,cmd,tip).pack(side='right')
         brand=tk.Frame(head,bg=bg);brand.pack(side='left',padx=CONTENT_PAD,pady=(22,0))
         self.logo=ImageTk.PhotoImage(load_icon(32).resize((28,28),Image.Resampling.LANCZOS),master=self.root)
         logo=tk.Label(brand,image=self.logo,bg=bg);logo.pack(side='left');self.logo_widget=logo
         self.update_logo()
-        name=tk.Label(brand,text='Codex',font=('Segoe UI',12),fg=self.color('#222426'),bg=bg);name.pack(side='left',padx=9)
+        name=tk.Label(brand,text='Codex',font=(UI_FONT,12),fg=self.color('#222426'),bg=bg);name.pack(side='left',padx=9)
         for widget in (head,brand,logo,name):
             widget.bind('<ButtonPress-1>',self.drag_window)
             widget.bind('<B1-Motion>',self.drag_motion)
@@ -965,8 +988,8 @@ class App:
         def adjust(e):
             self.canvas.configure(scrollregion=self.canvas.bbox('all'))
         self.body.bind('<Configure>',adjust)
-        self.root.bind_all('<MouseWheel>',lambda e:self.canvas.yview_scroll(int(-e.delta/120),'units'))
-        self.status=tk.Label(self.root,text='',font=('Segoe UI',9),fg=self.color('#8a8c8f'),bg=bg,anchor='w'); self.status.pack(fill='x',padx=CONTENT_PAD,pady=(8,18))
+        self.root.bind_all('<MouseWheel>',lambda e:self.canvas.yview_scroll(int(-e.delta) if sys.platform=='darwin' else int(-e.delta/120),'units'))
+        self.status=tk.Label(self.root,text='',font=(UI_FONT,9),fg=self.color('#8a8c8f'),bg=bg,anchor='w'); self.status.pack(fill='x',padx=CONTENT_PAD,pady=(8,18))
         self.status_tooltip=Tooltip(self.status,self.status_tooltip_text)
         self.status_detail=self.data.get('details','')
     def window_button(self,parent,kind,command,tip):
@@ -985,7 +1008,7 @@ class App:
         Tooltip(button,tip)
         return button
 
-    def label(self,parent,text,size=11,color='#777b80',font='Segoe UI',bold=False,**kw):
+    def label(self,parent,text,size=11,color='#777b80',font=UI_FONT,bold=False,**kw):
         return tk.Label(parent,text=text,bg=self.bg,fg=self.color(color),font=(font,size,'bold' if bold else 'normal'),**kw)
 
     def period_badge(self,parent,text):
@@ -1037,11 +1060,11 @@ class App:
             cols.columnconfigure(index,weight=1,uniform='totals')
             f=tk.Frame(cols,bg=self.bg); f.grid(row=0,column=index,sticky='ew')
             self.label(f,title,10,anchor='w').pack(fill='x')
-            number=self.label(f,'',13,'#292d30',font='Consolas',anchor='w');number.pack(fill='x',pady=(3,1))
+            number=self.label(f,'',13,'#292d30',font=MONO_FONT,anchor='w');number.pack(fill='x',pady=(3,1))
             price=self.label(f,'',11,'#73777b',anchor='w');price.pack(fill='x')
             widgets['usage'][key]=number;widgets['usage'][cost]=price
             Tooltip(price,'Estimated API-equivalent cost (USD)')
-        delta=AccountLabel(self.body,self,('Segoe UI',10),'#185c40')
+        delta=AccountLabel(self.body,self,(UI_FONT,10),'#185c40')
         delta.pack(fill='x',pady=(7,10));widgets['delta']=delta
         Tooltip(delta,lambda:delta_tooltip(self.data,self.settings) if 'delta_sources' in self.data or self.data.get('delta') is not None else 'Available after the next successful refresh')
         tk.Frame(self.body,bg=self.color('#e9eaec'),height=1).pack(fill='x')
@@ -1113,7 +1136,7 @@ class App:
             if item is None:
                 labels=[];tips={}
                 for col in range(4):
-                    label=AccountLabel(grid,self,('Consolas',10),'#353a3e') if col==0 else self.label(grid,'',10,'#353a3e',font='Consolas',anchor='e')
+                    label=AccountLabel(grid,self,(MONO_FONT,10),'#353a3e') if col==0 else self.label(grid,'',10,'#353a3e',font=MONO_FONT,anchor='e')
                     label.grid(row=index,column=col,sticky='ew',pady=1);labels.append(label)
                     if col in (1,2,3): tips[col]=Tooltip(label,'')
                 item={'labels':labels,'tips':tips,'row':index};existing[key]=item
@@ -1164,7 +1187,7 @@ class App:
             ('Appearance',a,['System','Light','Dark']),
             ('Refresh interval',v,list(INTERVALS))]):
             self.label(box,title,11,anchor='w').grid(row=row,column=0,sticky='w',pady=6)
-            combo=ttk.Combobox(box,textvariable=variable,values=values,state='readonly',width=18,font=('Segoe UI',10),style='Meter.TCombobox')
+            combo=ttk.Combobox(box,textvariable=variable,values=values,state='readonly',width=18,font=(UI_FONT,10),style='Meter.TCombobox')
             combo.configure(postcommand=lambda widget=combo:self.style_dropdown(widget))
             combo.grid(row=row,column=1,padx=(20,0))
         account_box=tk.Frame(box,bg=self.bg);account_box.grid(row=2,column=0,columnspan=2,sticky='ew',pady=(10,12))
@@ -1201,7 +1224,7 @@ class App:
             ttk.Checkbutton(speed_choices,text=title,variable=speed_vars[key],style='Meter.TCheckbutton').pack(side='left',padx=(0,18))
         self.label(speed_box,'Only checked windows run on the next refresh. Uncheck all to skip speed scans.',9,anchor='w',wraplength=SETTINGS_WRAP,justify='left').pack(fill='x',pady=(5,0))
         self.label(box,'Reserve adjustment (tokens)',11,anchor='w').grid(row=4,column=0,sticky='w',pady=6)
-        ttk.Entry(box,textvariable=r,width=21,font=('Segoe UI',10),style='Meter.TEntry').grid(row=4,column=1,padx=(20,0))
+        ttk.Entry(box,textvariable=r,width=21,font=(UI_FONT,10),style='Meter.TEntry').grid(row=4,column=1,padx=(20,0))
         reserve_help=(
             'Manual correction for missing reserve tokens. Added once to all-time '
             'tokens while a GPT account is enabled. Monthly tokens and costs are '
@@ -1467,7 +1490,7 @@ class App:
 
     def begin_app_update(self,relaunch):
         version,stage=self.pending_app_update
-        app_updater.start_installer(stage,self.app_update_root,DATA,ROOT/'scripts/apply-update.ps1',version,relaunch)
+        app_updater.start_installer(stage,self.app_update_root,DATA,ROOT/'scripts'/('apply-update-macos.sh' if sys.platform=='darwin' else 'apply-update.ps1'),version,relaunch)
 
     def maybe_apply_app_update(self):
         if (not getattr(self,'pending_app_update',None) or self.closed or self.busy
@@ -1628,6 +1651,16 @@ def find_ready_window():
 
 
 def start_single_instance():
+    if sys.platform=='darwin':
+        instance=mac_support.SingleInstance(DATA)
+        if not instance.acquire():
+            if '--start-hidden' not in sys.argv: instance.notify()
+            return
+        try:
+            if resume_app_update_before_window(): return
+            app=App();instance.listen(app);app.run()
+        finally: instance.close()
+        return
     import ctypes
     from ctypes import wintypes
     kernel=ctypes.WinDLL('kernel32',use_last_error=True);user=ctypes.windll.user32
@@ -1662,5 +1695,11 @@ def start_single_instance():
 
 
 if __name__=='__main__':
-    if '--worker-output' in sys.argv: worker_main()
+    if '--worker-output' in sys.argv:
+        if os.name!='nt':
+            import signal
+            def stop_worker(*unused):
+                cancel_scans();raise SystemExit(0)
+            signal.signal(signal.SIGTERM,stop_worker)
+        worker_main()
     else: start_single_instance()

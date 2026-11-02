@@ -8,3 +8,4 @@ release/
 *.spec
 .env
 .env.*
+.venv/

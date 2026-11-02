@@ -4,3 +4,4 @@ rich>=13,<16
 joblib>=1.4,<2
 tzdata>=2025.1
 orjson>=3.10,<4
+pyobjc-framework-Cocoa>=10; sys_platform == "darwin"

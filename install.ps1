@@ -10,7 +10,7 @@ if (Test-Path -LiteralPath $packaged) {
     $arguments = ''
     $icon = Join-Path $targetRoot '_internal\assets\codex-gradient.ico'
 } else {
-    foreach ($file in @('meter.py', 'sources.py', 'system_theme.py', 'app_updater.py', 'requirements.txt')) {
+    foreach ($file in @('meter.py', 'sources.py', 'system_theme.py', 'app_updater.py', 'mac_support.py', 'mac_updater.py', 'requirements.txt')) {
         Copy-Item -LiteralPath (Join-Path $sourceRoot $file) -Destination $targetRoot -Force
     }
     Copy-Item -LiteralPath (Join-Path $sourceRoot 'assets') -Destination $targetRoot -Recurse -Force

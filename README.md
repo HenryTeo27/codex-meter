@@ -1,6 +1,6 @@
 # Codex Meter
 
-A small Windows desktop meter for Codex usage and speed. Close it to the notification area and reopen it from the desktop shortcut.
+A small Windows and macOS desktop meter for Codex usage and speed. Close it to the notification area or menu bar and reopen it from the desktop shortcut.
 
 <p>
   <img src="docs/screenshot-dark.png" alt="Codex Meter in dark mode" width="48%">
@@ -19,6 +19,8 @@ Windows [registry change notifications](https://learn.microsoft.com/en-us/window
 
 ## Quick install
 
+### Windows
+
 1. Download **[Codex-Meter-Windows-x64.zip](https://github.com/HenryTeo27/codex-meter/releases/latest/download/Codex-Meter-Windows-x64.zip)** from [Releases](https://github.com/HenryTeo27/codex-meter/releases/latest).
 2. Extract the ZIP, then double-click **Install.cmd**. No administrator access or Python installation is needed.
 3. Open **Codex Meter** on your desktop. The installer also adds it to the Start menu.
@@ -27,6 +29,16 @@ Windows [registry change notifications](https://learn.microsoft.com/en-us/window
 **Requires Windows 10/11 x64, Node.js 22+ with npm, and Codex installed.** Sign in with ChatGPT or an API key to show the available account information. Restart the app after installing Node.js so it can find `npx`. Codex Desktop's bundled CLI is detected when it is not on PATH. This app uses your local Codex logs; it cannot recover activity from other computers or deleted logs.
 
 Python and the speed tool's libraries are included in the release. codex-speed is downloaded automatically on its first scan. First use needs internet access. Keep the entire extracted folder if running the app directly from `CodexMeter/CodexMeter.exe`; after installing, the extracted ZIP folder can be removed.
+
+### macOS
+
+Download the **macOS arm64** ZIP for Apple Silicon or **macOS x86_64** ZIP for Intel from [Releases](https://github.com/HenryTeo27/codex-meter/releases). Extract it and run `install-macos.command`. It installs `CodexMeter.app` under `~/Applications` and adds a desktop shortcut. Node.js 22+ and a signed-in Codex installation are still required. Python is included in packaged downloads. The supported build baseline is macOS 15 or later; older macOS versions are not verified.
+
+The app uses macOS window controls, menu bar actions, Mac fonts and trackpad scrolling. Finder launches also search common Homebrew and Node installation paths. Settings and the latest snapshot are saved under `~/Library/Application Support/CodexMeter`. Appearance follows macOS notifications in System mode. Light and Dark can also be selected manually.
+
+macOS builds are ad-hoc signed, not notarized with an Apple Developer account. macOS may require approval in **System Settings → Privacy & Security** on first launch. No developer certificate or notarization credential is included in this project. Do not disable Gatekeeper globally.
+
+For a source installation, use Python 3.12 with Tk from python.org, clone this repository and run `sh install-macos.command`. The script creates a local environment and builds the app on your Mac. Apple Silicon and Intel have separate CI builds.
 
 ## Use
 
