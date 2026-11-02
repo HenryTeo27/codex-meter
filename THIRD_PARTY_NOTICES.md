@@ -15,5 +15,6 @@ The MIT license covers this project's original code. Third-party packages retain
 | orjson | Fast JSON decoding; upstream speed statistics are unchanged | https://github.com/ijl/orjson — Apache-2.0 OR MIT |
 | tzdata | Timezone database | https://github.com/python/tzdata — Apache-2.0; IANA data public domain |
 | PyInstaller | Windows packaging | https://pyinstaller.org/ — GPL with bootloader exception |
+| PyObjC | macOS Cocoa integration and menu bar | https://pyobjc.readthedocs.io/ — MIT |
 
 The Windows release uses a folder bundle with an external Python shared library. Dependency license files are included under `licenses/`. Python package wheels and source are available from each upstream project. To change pystray or another bundled Python package, install the replacement in the app's `_internal/` folder with the same module name, or rebuild from the published source and `requirements.txt`. The build does not embed codex-speed or ccusage source.

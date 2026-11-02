@@ -27,7 +27,8 @@ with info.open('rb') as stream: metadata=plistlib.load(stream)
 metadata.update(CFBundleShortVersionString=meter.VERSION,CFBundleVersion=meter.VERSION,CFBundleDisplayName='Codex Meter')
 with info.open('wb') as stream: plistlib.dump(metadata,stream)
 licenses=bundle/'Contents/Resources/licenses';licenses.mkdir(exist_ok=True)
-for name in ('pystray','Pillow','rich','joblib','cloudpickle','tzdata','orjson','pyinstaller'):
+for name in ('pystray','Pillow','rich','joblib','cloudpickle','tzdata','orjson','pyinstaller',
+             'six','markdown-it-py','mdurl','pygments','pyobjc-core','pyobjc-framework-Cocoa','pyobjc-framework-Quartz'):
     package=importlib.metadata.distribution(name)
     for entry in package.files or []:
         if 'license' in str(entry).lower() or 'copying' in str(entry).lower():
