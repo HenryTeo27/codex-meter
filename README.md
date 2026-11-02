@@ -81,7 +81,7 @@ An installed app checks for a stable release about every 6 hours. Starting the a
 
 Downloads receive a SHA-256 check and a hidden startup check. Settings and the latest results are saved before installation. Once the window is hidden in the tray and its refresh finishes, the update installs and restarts in the tray. Quitting with a ready update installs it and leaves the app closed.
 
-The verified archive is saved until installation. If Windows restarts first, a one-time sign-in entry resumes the update and returns the app to the tray. Opening the app also installs a saved update before showing the window. No general Windows autostart is enabled. The status tooltip shows update errors or when an update is ready.
+The verified archive is saved until installation. On Windows, a one-time sign-in entry can resume a pending update after a restart. On both platforms, opening the app installs a saved update before showing the window. macOS updates require installation under `~/Applications/CodexMeter.app`; extracted portable bundles and source checkouts do not replace themselves. No general autostart is enabled. The status tooltip shows update errors or when an update is ready.
 
 If a replacement or the restarted app fails, the installer attempts to restore the previous version. The download is protected by HTTPS and the release digest, but releases are not code-signed. Source installations are converted to the packaged app during an automatic update; the desktop, Start menu and matching pinned shortcuts are updated. A development checkout or an executable run directly from an extracted ZIP does not update itself. Use the installer to enable updates.
 

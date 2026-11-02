@@ -78,7 +78,7 @@ class ThemeWatcher:
 
     def stop(self):
         self.closed.set()
-        if hasattr(self,'observer'):
+        if getattr(self,'observer',None) is not None:
             self.center.removeObserver_(self.observer);self.observer=None
         if self.stop_event:
             import ctypes

@@ -66,4 +66,23 @@ class MacTests(unittest.TestCase):
             finally:
                 first.close();second.close()
 
+    @unittest.skipUnless(sys.platform=='darwin','Native macOS updater')
+    def test_native_installer_restarts_and_preserves_user_data(self):
+        import subprocess
+        with tempfile.TemporaryDirectory() as folder:
+            home=Path(folder);target=home/'Applications/CodexMeter.app';target.mkdir(parents=True)
+            (target/'old.txt').write_text('old')
+            data=home/'Library/Application Support/CodexMeter';stage=data/'updates'/('update-'+'a'*32)
+            executable=stage/'CodexMeter.app/Contents/MacOS/CodexMeter';executable.parent.mkdir(parents=True)
+            executable.write_text('#!/bin/sh\nwhile [ "$1" != "--update-ready" ]; do shift; done\nshift\nprintf \'{"version":"9.0.0","pid":%s}\' "$$" > "$1"\nsleep 2\n')
+            executable.chmod(0o755);(data/'snapshot.json').write_text('saved')
+            parent=subprocess.Popen(['/usr/bin/true']);parent.wait()
+            helper=Path(__file__).parent/'scripts/apply-update-macos.sh'
+            result=subprocess.run(['/bin/sh',str(helper),str(parent.pid),str(target),str(stage),'9.0.0','1'],
+                env={**os.environ,'HOME':str(home)},capture_output=True,text=True,timeout=15)
+            self.assertEqual(result.returncode,0,result.stderr)
+            self.assertTrue((target/'Contents/MacOS/CodexMeter').is_file())
+            self.assertEqual((data/'snapshot.json').read_text(),'saved')
+            self.assertFalse(stage.exists())
+
 if __name__=='__main__': unittest.main()
