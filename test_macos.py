@@ -27,6 +27,8 @@ class MacTests(unittest.TestCase):
             archive=Path(folder)/'app.zip'
             for name in ('../escape','CodexMeter.app/../escape','/tmp/escape','CodexMeter.app/a\\b'):
                 with zipfile.ZipFile(archive,'w') as bundle: bundle.writestr(name,'bad')
+                if chr(92) in name:
+                    archive.write_bytes(archive.read_bytes().replace(name.replace(chr(92),'/').encode(),name.encode()))
                 with self.assertRaises(ValueError): update.validate_archive(archive)
             for link in ('/tmp/escape','../../escape'):
                 item=zipfile.ZipInfo('CodexMeter.app/link');item.external_attr=(stat.S_IFLNK|0o777)<<16

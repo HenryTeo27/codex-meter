@@ -59,7 +59,7 @@ def validate_archive(archive):
     total=0;seen=set()
     with zipfile.ZipFile(archive) as bundle:
         for item in bundle.infolist():
-            name=item.filename.rstrip('/')
+            name=item.orig_filename.rstrip('/')
             if name in ('install-macos.command','README.md','LICENSE','THIRD_PARTY_NOTICES.md'):
                 if stat.S_ISLNK(item.external_attr>>16): raise ValueError('Unsafe installer link')
                 if name.casefold() in seen: raise ValueError('Duplicate archive entry')
