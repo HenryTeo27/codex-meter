@@ -71,7 +71,7 @@ Both installers place the app in `%LOCALAPPDATA%\Programs\CodexMeter` and add de
 
 ## Repository migration
 
-The main repository is now [HenryTeo27/codex-meter](https://github.com/HenryTeo27/codex-meter). The previous `HenryTeo27/ai-agent-usage-speed-app` repository remains as a compatibility endpoint for older installed apps and historical downloads. Its migration release moves existing installations to the new update address automatically. Issues and contributions belong in the main repository.
+The main repository is now [HenryTeo27/codex-meter](https://github.com/HenryTeo27/codex-meter). The previous `HenryTeo27/ai-agent-usage-speed-app` repository is a migration-only endpoint for older installed apps. Its historical installer releases are hidden; the public migration payload remains available so existing updaters can reach it. New installations, documentation, issues and contributions belong in the main repository. GitHub cannot restrict a public migration payload to updater clients.
 
 For an existing source checkout, run `git remote set-url origin https://github.com/HenryTeo27/codex-meter.git`. The local folder name and installed app data path can stay the same.
 
