@@ -273,6 +273,13 @@ class ParserTests(unittest.TestCase):
                 self.assertEqual(meter.get_usage()['month_tokens'],0)
 
 class SpeedBatchTests(unittest.TestCase):
+    def test_reverted_rollout_uses_thread_id(self):
+        thread='11111111-1111-4111-8111-111111111111'
+        revision='22222222-2222-4222-8222-222222222222'
+        for suffix in ('', f'_{revision}'):
+            filename=f'rollout-2026-11-11T13-00-00-{thread}{suffix}.jsonl'
+            self.assertEqual(meter.ROLLOUT_THREAD_RE.search(filename).group(1),thread)
+
     def test_older_three_argument_engine_and_both_windows(self):
         import tempfile
         from pathlib import Path
@@ -280,7 +287,8 @@ class SpeedBatchTests(unittest.TestCase):
         from datetime import datetime, timedelta, timezone
         from unittest.mock import MagicMock
         now=datetime.now(timezone.utc)
-        samples=[SimpleNamespace(completed_at=(now-timedelta(hours=12)).isoformat(),output_tokens=200),
+        recent=SimpleNamespace(completed_at=(now-timedelta(hours=12)).isoformat(),output_tokens=200,response_id='copied-response')
+        samples=[recent,recent,
                  SimpleNamespace(completed_at=(now-timedelta(days=3)).isoformat(),output_tokens=200),
                  SimpleNamespace(completed_at=(now-timedelta(hours=1)).isoformat(),output_tokens=20)]
         engine=SimpleNamespace(find_rollouts=lambda home: [], json=None)
@@ -289,6 +297,7 @@ class SpeedBatchTests(unittest.TestCase):
             self.assertIsNone(cache)
             return samples,{'unreadable_files':0}
         def report(meta,selected,tz,**kw):
+            self.assertTrue(kw['show_unrecorded'])
             calls.append(len(selected))
             print('Selected history\nModel Normal eff Fast eff Ratio Normal n Fast n\ngpt-test 10.0 20.0 2.00× 30 40\n')
         engine.load_samples=load;engine.build_report=lambda selected,*args:{};engine.print_report=report

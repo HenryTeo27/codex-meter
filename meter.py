@@ -46,7 +46,7 @@ VENDOR = SPEED.parent / 'vendor'
 UPSTREAM = 'https://gist.githubusercontent.com/pszemraj/f8fe69ff5002c3bd0825edfd02001635/raw/codex_speed.py'
 CREATE = 0x08000000 if os.name == 'nt' else 0
 PYTHON = str(Path(sys.executable).with_name('python.exe')) if Path(sys.executable).name.lower() == 'pythonw.exe' else sys.executable
-VERSION = '1.2.0'
+VERSION = '1.2.1'
 UI_FONT = 'Helvetica Neue' if sys.platform=='darwin' else 'Segoe UI'
 MONO_FONT = 'Menlo' if sys.platform=='darwin' else 'Consolas'
 REPOSITORY = 'https://github.com/HenryTeo27/codex-meter'
@@ -55,6 +55,8 @@ SETTINGS_WRAP = 450
 INTERVALS = {'Manual':0, '30 minutes':0.5, '1 hour':1, '2 hours':2,
              '4 hours':4, '6 hours':6, '8 hours':8, '12 hours':12}
 SPEED_WINDOWS = {'4h':('4 hours',4), '1':('1 day',24), '14':('14 days',336)}
+ROLLOUT_UUID = r'[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}'
+ROLLOUT_THREAD_RE = re.compile(rf'({ROLLOUT_UUID})(?:_{ROLLOUT_UUID})?\.jsonl$', re.IGNORECASE)
 DEFAULT = {'interval': 2, 'reserve': 600000000, 'appearance':'system', 'speed_windows':['4h','1']}
 DEADLINE_CHECK_MS = 60000
 APP_UPDATE_INTERVAL = 6*3600
@@ -613,7 +615,9 @@ def speed_batch(script,homes=None,windows=None):
     engine=importlib.util.module_from_spec(spec)
     sys.modules[spec.name]=engine
     spec.loader.exec_module(engine)
-    # Only JSON decoding changes; parsing and statistics remain upstream code.
+    # A reverted thread keeps its thread ID before the optional rollout ID.
+    # The parser uses this ID to distinguish native responses from fork history.
+    engine.UUID_RE=ROLLOUT_THREAD_RE
     import orjson
     engine.json=SimpleNamespace(loads=orjson.loads,dumps=json.dumps,JSONDecodeError=orjson.JSONDecodeError)
     now=datetime.now(timezone.utc)
@@ -634,12 +638,17 @@ def speed_batch(script,homes=None,windows=None):
         with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
             local,local_totals=engine.load_samples(home,None,1)
         if local_totals.get('unreadable_files'): raise RuntimeError(f"Cannot read Codex log files in {source_label(home)}")
-        groups.append((home,local,local_totals))
+        # Older and newer rollouts can both contain the same response.
+        unique=[];local_seen=set()
         for sample in local:
             identity=getattr(sample,'response_id',None)
+            if identity and identity in local_seen: continue
+            if identity: local_seen.add(identity)
+            unique.append(sample)
             if identity and identity in seen: continue
             if identity: seen.add(identity)
             samples.append(sample)
+        groups.append((home,unique,local_totals))
         for key,value in local_totals.items():
             if isinstance(value,(int,float)): totals[key]=totals.get(key,0)+value
     samples.sort(key=lambda sample:sample.completed_at)
@@ -655,7 +664,7 @@ def speed_batch(script,homes=None,windows=None):
             buffer=io.StringIO()
             from rich.console import Console
             with contextlib.redirect_stdout(buffer), contextlib.redirect_stderr(buffer):
-                engine.print_report(engine.build_report(selected,metadata,100,tz),selected,tz,granularity='summary',console=Console(file=buffer,width=140,highlight=False))
+                engine.print_report(engine.build_report(selected,metadata,100,tz),selected,tz,granularity='summary',show_unrecorded=True,console=Console(file=buffer,width=140,highlight=False))
             output[key]=parse_speed(buffer.getvalue())
         return output
     output=report(samples,totals)
