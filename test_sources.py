@@ -77,6 +77,50 @@ class MultiHomeTests(unittest.TestCase):
         self.assertEqual(meter.delta_text(data,{}),'GPT +20 tokens\nAPI —')
         self.assertEqual(meter.delta_text(data,{'disabled_sources':['api']}),'GPT +20 tokens')
 
+    def test_paused_usage_survives_reload_rollover_and_resume(self):
+        month=meter.datetime.now().strftime('%Y-%m')
+        old_month='2020-01'
+        gpt={'source':'gpt','short':'GPT','month_tokens':100,'month_cost':2,'total_tokens':600,'total_cost':12}
+        api={'source':'api','short':'API','month_tokens':50,'month_cost':1,'total_tokens':400,'total_cost':8}
+        prior=meter.combined_usage([gpt,api],old_month)
+        partial=meter.combined_usage([{**gpt,'month_tokens':120,'total_tokens':620}],old_month)
+        data={}
+        meter.apply_usage_result(data,meter.merge_usage_result(prior,partial),prior,1)
+        self.assertEqual(data['usage']['month_tokens'],170)
+        self.assertEqual(data['usage']['total_tokens'],1020)
+        self.assertEqual(meter.delta_text(data,{'disabled_sources':['api']}),'GPT +20 tokens')
+        with tempfile.TemporaryDirectory() as tmp, patch.object(meter,'SNAPSHOT',Path(tmp)/'snapshot.json'):
+            meter.save(meter.SNAPSHOT,data)
+            data=meter.load_snapshot()
+        prior=data['usage']
+        displayed=meter.displayed_usage(data)
+        self.assertEqual((displayed['month_tokens'],displayed['month_cost']),(0,0))
+        self.assertEqual((displayed['total_tokens'],displayed['total_cost']),(1020,20))
+
+        # Even an all-off refresh preserves both last observations.
+        paused=meter.merge_usage_result(prior,meter.combined_usage([],month))
+        self.assertEqual(paused['month_tokens'],0)
+        self.assertEqual(paused['total_tokens'],1020)
+        next_gpt={**gpt,'month_tokens':30,'month_cost':1,'total_tokens':650,'total_cost':13}
+        partial=meter.merge_usage_result(paused,meter.combined_usage([next_gpt],month))
+        self.assertEqual((partial['month_tokens'],partial['month_cost']),(30,1))
+        self.assertEqual((partial['total_tokens'],partial['total_cost']),(1050,21))
+
+        next_api={**api,'month_tokens':20,'month_cost':1,'total_tokens':420,'total_cost':9}
+        resumed=meter.merge_usage_result(partial,meter.combined_usage([next_gpt,next_api],month))
+        meter.apply_usage_result(data,resumed,partial,2)
+        self.assertEqual((resumed['month_tokens'],resumed['month_cost']),(50,2))
+        self.assertEqual((resumed['total_tokens'],resumed['total_cost']),(1070,22))
+        self.assertEqual(meter.delta_text(data,{}),'GPT +0 tokens\nAPI +20 tokens')
+
+    def test_legacy_cached_month_uses_the_original_scan_time(self):
+        api={'source':'api','stale':True,'observed_at':meter.datetime(2026,10,15).timestamp(),
+             'month_tokens':50,'month_cost':1,'total_tokens':400,'total_cost':8}
+        legacy=meter.combined_usage([api],'2026-11')
+        merged=meter.merge_usage_result(legacy,meter.combined_usage([],'2026-11'))
+        self.assertEqual((merged['month_tokens'],merged['month_cost']),(0,0))
+        self.assertEqual((merged['total_tokens'],merged['total_cost']),(400,8))
+
     def test_limits_are_queried_per_home_without_inherited_api_keys(self):
         with tempfile.TemporaryDirectory() as tmp:
             homes = [Path(tmp) / 'chat', Path(tmp) / 'failed', Path(tmp) / 'api']

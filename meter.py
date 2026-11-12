@@ -46,7 +46,7 @@ VENDOR = SPEED.parent / 'vendor'
 UPSTREAM = 'https://gist.githubusercontent.com/pszemraj/f8fe69ff5002c3bd0825edfd02001635/raw/codex_speed.py'
 CREATE = 0x08000000 if os.name == 'nt' else 0
 PYTHON = str(Path(sys.executable).with_name('python.exe')) if Path(sys.executable).name.lower() == 'pythonw.exe' else sys.executable
-VERSION = '1.2.1'
+VERSION = '1.2.2'
 UI_FONT = 'Helvetica Neue' if sys.platform=='darwin' else 'Segoe UI'
 MONO_FONT = 'Menlo' if sys.platform=='darwin' else 'Consolas'
 REPOSITORY = 'https://github.com/HenryTeo27/codex-meter'
@@ -274,7 +274,6 @@ def merge_cached_sources(previous,value,enabled_ids,windows=None):
         fresh.append(item)
     fresh_ids={item['source'] for item in fresh}
     cached=[item for identity,item in old.items() if identity not in fresh_ids and (identity not in enabled_ids or windows==[])]
-    cached=[{**item,'stale':True} if 'month_tokens' in item else item for item in cached]
     result={**value,key:fresh+cached}
     if windows is not None:
         result={**{k:v for k,v in previous.items() if k in SPEED_WINDOWS and k not in windows},**result}
@@ -298,14 +297,38 @@ def short_names(homes):
 
 
 def combined_usage(sources,month):
-    return {'month':month,**{key:sum(item.get(key,0) for item in sources)
-            for key in ('month_tokens','month_cost','total_tokens','total_cost')},'sources':sources}
+    monthly=[item for item in sources if item.get('month',month)==month]
+    return {'month':month,'month_tokens':sum(item.get('month_tokens',0) for item in monthly),
+            'month_cost':sum(item.get('month_cost',0) for item in monthly),
+            'total_tokens':sum(item.get('total_tokens',0) for item in sources),
+            'total_cost':sum(item.get('total_cost',0) for item in sources),'sources':sources}
 
 
-def displayed_usage(data,settings):
+def usage_sources(usage):
+    for item in usage.get('sources',[]):
+        if 'month' in item:
+            yield item
+            continue
+        month=usage.get('month')
+        # Older snapshots stored only a shared month, even for cached accounts.
+        if item.get('stale') and type(item.get('observed_at')) in (int,float):
+            try: month=datetime.fromtimestamp(item['observed_at']).strftime('%Y-%m')
+            except (OSError,OverflowError,ValueError): pass
+        yield {**item,'month':month}
+
+
+def merge_usage_result(previous,value):
+    if 'sources' not in value: return value
+    sources={os.path.normcase(item['source']):item for item in usage_sources(value)}
+    for item in usage_sources(previous or {}):
+        sources.setdefault(os.path.normcase(item['source']),{**item,'stale':True})
+    return {**value,**combined_usage(list(sources.values()),value['month'])}
+
+
+def displayed_usage(data):
     usage=data.get('usage',{})
     if 'sources' not in usage: return usage
-    return combined_usage([item for item in usage['sources'] if enabled_source(item['source'],settings)],usage.get('month'))
+    return combined_usage(list(usage_sources(usage)),datetime.now().strftime('%Y-%m'))
 
 
 def displayed_limits(data,settings):
@@ -351,20 +374,18 @@ def last_refresh_time(data, snapshot=None):
 
 def apply_usage_result(data,value,previous,observed_at):
     """One adjacent pair only; the reserve adjustment never enters this calculation."""
-    prior={item['source']:item for item in (previous or {}).get('sources',[])}
+    prior={os.path.normcase(item['source']):item for item in (previous or {}).get('sources',[])}
     if 'sources' in value:
         data['delta_sources']=[]
         for item in value['sources']:
-            before=prior.get(item['source'],{}).get('total_tokens')
+            before=prior.get(os.path.normcase(item['source']),{}).get('total_tokens')
             after=item.get('total_tokens')
             delta=after-before if before is not None and after is not None and not item.get('stale') else None
             data['delta_sources'].append({'source':item['source'],'short':item.get('short','Codex'),
                                          'delta':delta,'previous_tokens':before,'current_tokens':after})
     else: data.pop('delta_sources',None)
     if previous is not None and ('sources' in value or 'sources' in previous):
-        old={item['source'] for item in previous.get('sources',[]) if 'source' in item}
-        new={item['source'] for item in value.get('sources',[]) if 'source' in item}
-        if old!=new: previous=None
+        if set(prior)!={os.path.normcase(item['source']) for item in value.get('sources',[])}: previous=None
     before=previous['total_tokens'] if previous is not None else None
     after=value['total_tokens']
     previous_at=data.get('updated_at',{}).get('usage')
@@ -497,7 +518,7 @@ def get_usage(homes=None):
         except Exception: return None,identity
         rows=data['monthly'];total=data['totals']
         current=next((x for x in rows if x['month']==month),{'totalTokens':0,'costUSD':0})
-        return {**identity,'month_tokens':current['totalTokens'],'month_cost':current['costUSD'],
+        return {**identity,'month':month,'month_tokens':current['totalTokens'],'month_cost':current['costUSD'],
                 'total_tokens':total['totalTokens'],'total_cost':total['costUSD'],'observed_at':time.time()},None
     with ThreadPoolExecutor(max_workers=3) as pool: results=list(pool.map(query,homes))
     result=combined_usage([item for item,error in results if item],month)
@@ -1113,7 +1134,7 @@ class App:
                 if not secondary.winfo_manager(): secondary.pack(fill='x',pady=(0,10))
             elif secondary.winfo_manager(): secondary.pack_forget()
         if source in (None,'usage'):
-            usage=displayed_usage(self.data,self.settings)
+            usage=displayed_usage(self.data)
             for key in ('month_tokens','total_tokens'):
                 number=usage.get(key)
                 reserve_applies='sources' not in usage or any(item.get('short','').startswith('GPT') for item in usage['sources'])
@@ -1223,7 +1244,7 @@ class App:
             option.pack(anchor='w',pady=2)
             Tooltip(option,str(home)+('\n'+account['email'] if account.get('email') else ''))
         if not homes: self.label(account_box,'No local Codex accounts found',10,anchor='w').pack(fill='x')
-        self.label(account_box,'Off excludes this account from the next refresh and displayed totals.',9,anchor='w',wraplength=SETTINGS_WRAP,justify='left').pack(fill='x',pady=(5,0))
+        self.label(account_box,'Off pauses scans for this account. Its last saved usage still counts toward the totals.',9,anchor='w',wraplength=SETTINGS_WRAP,justify='left').pack(fill='x',pady=(5,0))
         speed_box=tk.Frame(box,bg=self.bg);speed_box.grid(row=3,column=0,columnspan=2,sticky='ew',pady=(0,12))
         self.label(speed_box,'Speed windows',11,'#292d30',anchor='w').pack(fill='x',pady=(0,5))
         speed_choices=tk.Frame(speed_box,bg=self.bg);speed_choices.pack(fill='x')
@@ -1236,7 +1257,7 @@ class App:
         ttk.Entry(box,textvariable=r,width=21,font=(UI_FONT,10),style='Meter.TEntry').grid(row=4,column=1,padx=(20,0))
         reserve_help=(
             'Manual correction for missing reserve tokens. Added once to all-time '
-            'tokens while a GPT account is enabled. Monthly tokens and costs are '
+            'tokens when the totals include GPT usage. Monthly tokens and costs are '
             'unchanged. Set 0 for no adjustment.'
         )
         self.label(box,reserve_help,10,anchor='w',wraplength=SETTINGS_WRAP,justify='left').grid(row=5,column=0,columnspan=2,sticky='w',pady=8)
@@ -1374,14 +1395,7 @@ class App:
                     failed=value.get('failed_sources',[])
                     if failed:
                         self.refresh_errors.append('usage: '+', '.join(item['short'] for item in failed)+' unavailable')
-                        old={item['source']:item for item in (self.usage_baseline or {}).get('sources',[])}
-                        cached=[{**old[item['source']],'stale':True} for item in failed if item['source'] in old]
-                        order={source_id(home):index for index,home in enumerate(self.scan_homes)}
-                        sources=sorted(value['sources']+cached,key=lambda item:order.get(item['source'],len(order)))
-                        value={**value,**combined_usage(sources,value['month'])}
-                    value=merge_cached_sources(self.usage_baseline,value,enabled_ids)
-                    if 'sources' in value:
-                        value={**value,**combined_usage(value['sources'],value['month'])}
+                    value=merge_usage_result(self.usage_baseline,value)
                     apply_usage_result(self.data,value,self.usage_baseline,time.time())
                     for item in failed:
                         if not any(row['source']==item['source'] for row in self.data['delta_sources']):

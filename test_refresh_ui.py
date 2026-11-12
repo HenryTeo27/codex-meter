@@ -158,7 +158,7 @@ class HiddenRefreshTests(unittest.TestCase):
         app.data['limits']={'primary':{'usedPercent':25},'accounts':[
             {'source':'chat','kind':'chatgpt','limits':{'primary':{'usedPercent':25}}},
             {'source':'api','kind':'apiKey'}]}
-        app.data['usage']=meter.combined_usage([chat,api],'2026-10')
+        app.data['usage']=meter.combined_usage([chat,api],meter.datetime.now().strftime('%Y-%m'))
         app.data['delta_sources']=[{'source':'chat','short':'GPT','delta':50},{'source':'api','short':'API','delta':20}]
         app.data['speed']={'sources':[{'source':'chat','short':'GPT','1':[self.old_row],'14':[]},
                                       {'source':'api','short':'API','1':[self.old_row],'14':[self.old_row]}]}
@@ -204,11 +204,12 @@ class HiddenRefreshTests(unittest.TestCase):
         homes=[Path(self.folder.name)/name for name in ('gpt','api')]
         for home in homes: (home/'sessions').mkdir(parents=True)
         ids=[meter.source_id(home) for home in homes]
+        month=meter.datetime.now().strftime('%Y-%m')
         calls=[];release=threading.Event();started=threading.Event()
         def usage(homes):
             calls.append(('usage',list(homes)))
             return meter.combined_usage([{'source':meter.source_id(home),'short':'GPT','month_tokens':10,
-                'total_tokens':100,'month_cost':1,'total_cost':2} for home in homes],'2026-11')
+                'total_tokens':100,'month_cost':1,'total_cost':2} for home in homes],month)
         def limits(homes):
             calls.append(('limits',list(homes)))
             return {'accounts':[{'source':meter.source_id(home),'kind':'chatgpt','limits':{}} for home in homes]}
@@ -243,6 +244,7 @@ class HiddenRefreshTests(unittest.TestCase):
                 self.assertEqual({item['source'] for item in app.data['speed']['sources']},set(ids))
                 self.assertEqual({item['source'] for item in app.data['limits']['accounts']},set(ids))
                 app.update_content()
+                self.assertEqual(app.content_widgets['usage']['month_tokens'].cget('text'),'20')
                 self.assertEqual(app.content_widgets['periods']['4h'].winfo_manager(),'')
                 self.assertEqual(app.content_widgets['periods']['1'].winfo_manager(),'')
                 self.assertEqual(app.content_widgets['periods']['14'].winfo_manager(),'pack')
@@ -260,10 +262,12 @@ class HiddenRefreshTests(unittest.TestCase):
             app.refresh();self.pump_until(lambda:not app.busy)
         self.assertFalse(app.refresh_errors)
         self.assertEqual({item['source'] for item in app.data['usage']['sources']},set(ids))
+        self.assertEqual(app.data['usage']['total_tokens'],200)
+        self.assertEqual(meter.load_snapshot()['usage']['month_tokens'],20)
         self.assertEqual({item['source'] for item in app.data['speed']['sources']},set(ids))
         self.assertEqual(app.root.state(),'withdrawn')
 
-    def test_settings_toggle_saves_immediately_and_filters_all_displays(self):
+    def test_settings_toggle_saves_immediately_and_keeps_usage_totals(self):
         app=self.app
         homes=[Path(self.folder.name)/'.codex',Path(self.folder.name)/'.codex-api']
         for home,mode in zip(homes,('chatgpt','apikey')):
@@ -272,7 +276,8 @@ class HiddenRefreshTests(unittest.TestCase):
         app.settings['reserve']=0
         app.data['usage']=meter.combined_usage([
             {'source':chat,'short':'GPT','month_tokens':120,'total_tokens':500,'month_cost':1,'total_cost':3},
-            {'source':api,'short':'API','month_tokens':40,'total_tokens':100,'month_cost':2,'total_cost':4}],'2026-10')
+            {'source':api,'short':'API','month_tokens':40,'total_tokens':100,'month_cost':2,'total_cost':4}],
+            meter.datetime.now().strftime('%Y-%m'))
         app.data['delta_sources']=[{'source':chat,'short':'GPT','delta':50},{'source':api,'short':'API','delta':20}]
         app.data['limits']={'accounts':[{'source':chat,'kind':'chatgpt','limits':{'primary':{'usedPercent':25}}}]}
         app.data['speed']={'sources':[{'source':chat,'short':'GPT','1':[self.old_row],'14':[]},
@@ -282,21 +287,21 @@ class HiddenRefreshTests(unittest.TestCase):
             app.settings_vars['accounts'][api].set(False)
             self.assertEqual(meter.load_settings()['disabled_sources'],[api])
             self.assertEqual(meter.enabled_homes(homes,app.settings),[homes[0]])
-            self.assertEqual(app.content_widgets['usage']['month_tokens'].cget('text'),'120')
-            self.assertEqual(app.content_widgets['usage']['month_cost'].cget('text'),'$1.00')
-            self.assertEqual(app.content_widgets['usage']['total_cost'].cget('text'),'$3.00')
+            self.assertEqual(app.content_widgets['usage']['month_tokens'].cget('text'),'160')
+            self.assertEqual(app.content_widgets['usage']['month_cost'].cget('text'),'$3.00')
+            self.assertEqual(app.content_widgets['usage']['total_cost'].cget('text'),'$7.00')
             self.assertEqual(app.content_widgets['delta'].cget('text'),'GPT +50 tokens')
             self.assertEqual(list(app.content_widgets['speed']['1']),[('GPT gpt-test',0)])
             app.settings_vars['accounts'][chat].set(False)
-            self.assertEqual(app.content_widgets['usage']['total_tokens'].cget('text'),'0')
-            self.assertEqual(app.content_widgets['usage']['month_cost'].cget('text'),'$0.00')
-            self.assertEqual(app.content_widgets['usage']['total_cost'].cget('text'),'$0.00')
+            self.assertEqual(app.content_widgets['usage']['total_tokens'].cget('text'),'600')
+            self.assertEqual(app.content_widgets['usage']['month_cost'].cget('text'),'$3.00')
+            self.assertEqual(app.content_widgets['usage']['total_cost'].cget('text'),'$7.00')
             self.assertEqual(app.content_widgets['speed']['1'],{})
             self.assertEqual(app.content_widgets['primary'].cget('text'),'Usage unavailable')
             app.settings_vars['accounts'][api].set(True)
-            self.assertEqual(app.content_widgets['usage']['month_tokens'].cget('text'),'40')
-            self.assertEqual(app.content_widgets['usage']['month_cost'].cget('text'),'$2.00')
-            self.assertEqual(app.content_widgets['usage']['total_cost'].cget('text'),'$4.00')
+            self.assertEqual(app.content_widgets['usage']['month_tokens'].cget('text'),'160')
+            self.assertEqual(app.content_widgets['usage']['month_cost'].cget('text'),'$3.00')
+            self.assertEqual(app.content_widgets['usage']['total_cost'].cget('text'),'$7.00')
             self.assertTrue(app.close_settings())
         self.assertEqual(meter.load_settings()['disabled_sources'],[chat])
 
