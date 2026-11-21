@@ -5,6 +5,9 @@ import meter
 class InvisibleGuiTests(unittest.TestCase):
     """Exercise real mapped windows without flashing test UI on the desktop."""
     def setUp(self):
+        import gc
+        # Retired Tk interpreters must be collected on the UI thread.
+        gc.collect();self.addCleanup(gc.collect)
         meter.load_gui()
         top_level=meter.tk.Toplevel
         def transparent_window(*args,**kwargs):
@@ -174,7 +177,7 @@ class SettingsTests(InvisibleGuiTests):
                 reserve=next(widget for widget in widgets if isinstance(widget,meter.ttk.Entry) and not isinstance(widget,meter.ttk.Combobox))
                 interval.set('4 hours');reserve.delete(0,'end');reserve.insert(0,'1,234')
                 next(widget for widget in widgets if isinstance(widget,meter.ttk.Button) and widget.cget('text')=='Save').invoke()
-                self.assertEqual(app.settings,{'interval':4,'reserve':1234,'appearance':'system','speed_windows':['4h','1']})
+                self.assertEqual(app.settings,{'interval':4,'reserve':1234,'appearance':'system','speed_windows':['4h','1'],'show_ultra':False})
                 self.assertEqual(meter.read(meter.CONFIG,{}),app.settings)
                 self.assertIsNotNone(app.job)
             finally:
@@ -192,6 +195,43 @@ class DeltaTests(unittest.TestCase):
         self.assertIn('Difference: +200,000',meter.delta_tooltip(data))
         meter.apply_usage_result(data,{'total_tokens':1_150_200_000},dict(data['usage']),3)
         self.assertEqual(data['delta'],0)
+        self.assertEqual(meter.delta_text(data,{}),'+200,000 tokens')
+        self.assertIn('latest refresh +0 tokens',meter.delta_tooltip(data))
+
+    def test_account_increases_survive_zero_scans_restart_and_new_increase(self):
+        import tempfile
+        from pathlib import Path
+        month=meter.datetime.now().strftime('%Y-%m')
+        def usage(gpt,api):
+            return meter.combined_usage([{'source':'gpt','short':'GPT','total_tokens':gpt},
+                                         {'source':'api','short':'API','total_tokens':api}],month)
+        data={'usage':usage(100,200)}
+        meter.apply_usage_result(data,usage(150,230),data['usage'],1)
+        for scan in range(2,6):
+            meter.apply_usage_result(data,usage(150,230),data['usage'],scan)
+            self.assertEqual(meter.delta_text(data,{}),'GPT +50 tokens\nAPI +30 tokens')
+            self.assertEqual(data['delta'],0)
+        with tempfile.TemporaryDirectory() as folder,patch.object(meter,'SNAPSHOT',Path(folder)/'snapshot.json'):
+            meter.save(meter.SNAPSHOT,data);data=meter.load_snapshot()
+        self.assertEqual(meter.delta_text(data,{}),'GPT +50 tokens\nAPI +30 tokens')
+        self.assertIn('100 → 150 (+50)',meter.delta_tooltip(data))
+        meter.apply_usage_result(data,usage(157,230),data['usage'],6)
+        self.assertEqual(meter.delta_text(data,{}),'GPT +7 tokens\nAPI +30 tokens')
+        self.assertEqual(data['delta'],7)
+        meter.apply_usage_result(data,usage(157,210),data['usage'],7)
+        self.assertEqual(meter.delta_text(data,{}),'GPT +7 tokens\nAPI -20 tokens')
+
+    def test_zero_without_any_positive_history_shows_placeholder(self):
+        data={}
+        meter.apply_usage_result(data,{'total_tokens':100}, {'total_tokens':100},1)
+        self.assertEqual(meter.delta_text(data,{}),'—')
+
+    def test_upgrade_keeps_the_previous_positive_per_account(self):
+        data={'delta_sources':[{'source':'gpt','short':'GPT','delta':20,'previous_tokens':100,'current_tokens':120}]}
+        usage={'total_tokens':120,'sources':[{'source':'gpt','short':'GPT','total_tokens':120}]}
+        meter.apply_usage_result(data,usage,usage,1)
+        self.assertEqual(meter.delta_text(data,{}),'GPT +20 tokens')
+        self.assertIn('100 → 120 (+20)',meter.delta_tooltip(data))
 
     def test_restart_uses_last_successful_usage_and_month_rollover(self):
         import tempfile
@@ -273,6 +313,36 @@ class ParserTests(unittest.TestCase):
                 self.assertEqual(meter.get_usage()['month_tokens'],0)
 
 class SpeedBatchTests(unittest.TestCase):
+    def test_ultra_uses_only_its_own_timed_responses(self):
+        import tempfile
+        from pathlib import Path
+        from types import SimpleNamespace
+        from unittest.mock import MagicMock
+        now=meter.datetime.now(meter.timezone.utc).isoformat()
+        samples=[SimpleNamespace(model='gpt-test',tier=tier,retried=retried,
+                   response_id=str(index),completed_at=now,output_tokens=200)
+                 for index,(tier,retried) in enumerate([
+                     ('standard',False),('fast',False),('ultrafast',False),('ultrafast',True)])]
+        engine=SimpleNamespace(find_rollouts=lambda home:[],json=None)
+        engine.load_samples=lambda *args:(samples,{})
+        engine.build_report=lambda *args:{}
+        engine.print_report=lambda *args,**kw:print('Selected history\nModel Normal Fast Ratio Normal_n Fast_n\ngpt-test 10 20 2x 1 1\n')
+        def summarize(selected,metric):
+            self.assertEqual(selected,[samples[2]])
+            self.assertEqual(metric,'effective')
+            return {'median':45.25,'n':1}
+        engine.summarize=summarize
+        with tempfile.TemporaryDirectory() as folder:
+            home=Path(folder);(home/'sessions').mkdir()
+            with patch.object(meter,'short_names',return_value={meter.source_id(home):'GPT'}), \
+                 patch.object(meter.importlib.util,'spec_from_file_location',return_value=MagicMock()), \
+                 patch.object(meter.importlib.util,'module_from_spec',return_value=engine):
+                result=meter.speed_batch('fixture.py',[home],['4h'])
+        row=result['4h'][0]
+        self.assertEqual((row['normal'],row['fast'],row['ultra'],row['ultra_n']),('10','20','45.2','1'))
+        self.assertEqual(row,result['sources'][0]['4h'][0])
+        meter.sys.modules.pop('_codex_meter_speed',None)
+
     def test_reverted_rollout_uses_thread_id(self):
         thread='11111111-1111-4111-8111-111111111111'
         revision='22222222-2222-4222-8222-222222222222'

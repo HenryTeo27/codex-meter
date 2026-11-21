@@ -111,7 +111,7 @@ class MultiHomeTests(unittest.TestCase):
         meter.apply_usage_result(data,resumed,partial,2)
         self.assertEqual((resumed['month_tokens'],resumed['month_cost']),(50,2))
         self.assertEqual((resumed['total_tokens'],resumed['total_cost']),(1070,22))
-        self.assertEqual(meter.delta_text(data,{}),'GPT +0 tokens\nAPI +20 tokens')
+        self.assertEqual(meter.delta_text(data,{}),'GPT +20 tokens\nAPI +20 tokens')
 
     def test_legacy_cached_month_uses_the_original_scan_time(self):
         api={'source':'api','stale':True,'observed_at':meter.datetime(2026,10,15).timestamp(),

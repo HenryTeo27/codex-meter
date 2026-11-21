@@ -46,7 +46,7 @@ VENDOR = SPEED.parent / 'vendor'
 UPSTREAM = 'https://gist.githubusercontent.com/pszemraj/f8fe69ff5002c3bd0825edfd02001635/raw/codex_speed.py'
 CREATE = 0x08000000 if os.name == 'nt' else 0
 PYTHON = str(Path(sys.executable).with_name('python.exe')) if Path(sys.executable).name.lower() == 'pythonw.exe' else sys.executable
-VERSION = '1.2.2'
+VERSION = '1.2.3'
 UI_FONT = 'Helvetica Neue' if sys.platform=='darwin' else 'Segoe UI'
 MONO_FONT = 'Menlo' if sys.platform=='darwin' else 'Consolas'
 REPOSITORY = 'https://github.com/HenryTeo27/codex-meter'
@@ -57,7 +57,7 @@ INTERVALS = {'Manual':0, '30 minutes':0.5, '1 hour':1, '2 hours':2,
 SPEED_WINDOWS = {'4h':('4 hours',4), '1':('1 day',24), '14':('14 days',336)}
 ROLLOUT_UUID = r'[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}'
 ROLLOUT_THREAD_RE = re.compile(rf'({ROLLOUT_UUID})(?:_{ROLLOUT_UUID})?\.jsonl$', re.IGNORECASE)
-DEFAULT = {'interval': 2, 'reserve': 600000000, 'appearance':'system', 'speed_windows':['4h','1']}
+DEFAULT = {'interval': 2, 'reserve': 600000000, 'appearance':'system', 'speed_windows':['4h','1'], 'show_ultra':False}
 DEADLINE_CHECK_MS = 60000
 APP_UPDATE_INTERVAL = 6*3600
 APP_UPDATE_RETRY = 3600
@@ -246,6 +246,7 @@ def load_settings():
         settings['interval']=saved['interval']
     if type(saved.get('reserve')) is int and saved['reserve']>=0: settings['reserve']=saved['reserve']
     if saved.get('appearance') in ('system','light','dark'): settings['appearance']=saved['appearance']
+    if type(saved.get('show_ultra')) is bool: settings['show_ultra']=saved['show_ultra']
     settings['speed_windows']=selected_speed_windows(saved)
     disabled=saved.get('disabled_sources')
     if isinstance(disabled,list):
@@ -346,12 +347,18 @@ def displayed_speed(data,days,settings):
             for row in item.get(days,[])]
 
 
+def visible_delta(item):
+    if item.get('delta')==0:
+        return item.get('last_increase',{}).get('delta')
+    return item.get('delta')
+
+
 def delta_text(data,settings):
     if 'delta_sources' not in data:
-        delta=data.get('delta')
+        delta=visible_delta(data)
         return f'{delta:+,} tokens' if delta is not None else '—'
     return '\n'.join(item.get('short','Codex')+' '+
-                     (f"{item['delta']:+,} tokens" if item.get('delta') is not None else '—')
+                     (f"{visible_delta(item):+,} tokens" if visible_delta(item) is not None else '—')
                      for item in data['delta_sources'] if enabled_source(item['source'],settings)) or '—'
 
 
@@ -375,24 +382,35 @@ def last_refresh_time(data, snapshot=None):
 def apply_usage_result(data,value,previous,observed_at):
     """One adjacent pair only; the reserve adjustment never enters this calculation."""
     prior={os.path.normcase(item['source']):item for item in (previous or {}).get('sources',[])}
+    previous_deltas={os.path.normcase(item['source']):item for item in data.get('delta_sources',[])}
     if 'sources' in value:
         data['delta_sources']=[]
         for item in value['sources']:
             before=prior.get(os.path.normcase(item['source']),{}).get('total_tokens')
             after=item.get('total_tokens')
             delta=after-before if before is not None and after is not None and not item.get('stale') else None
+            comparison={'delta':delta,'previous_tokens':before,'current_tokens':after,'current_at':observed_at}
+            old_delta=previous_deltas.get(os.path.normcase(item['source']),{})
+            last=old_delta.get('last_increase')
+            if (old_delta.get('delta') or 0)>0 and not last:
+                last={key:old_delta[key] for key in ('delta','previous_tokens','current_tokens','current_at') if key in old_delta}
+            if delta is not None and delta>0: last=dict(comparison)
             data['delta_sources'].append({'source':item['source'],'short':item.get('short','Codex'),
-                                         'delta':delta,'previous_tokens':before,'current_tokens':after})
+                                         **comparison,**({'last_increase':last} if last else {})})
     else: data.pop('delta_sources',None)
     if previous is not None and ('sources' in value or 'sources' in previous):
         if set(prior)!={os.path.normcase(item['source']) for item in value.get('sources',[])}: previous=None
     before=previous['total_tokens'] if previous is not None else None
     after=value['total_tokens']
     previous_at=data.get('updated_at',{}).get('usage')
+    if (data.get('delta') or 0)>0:
+        data['last_increase']={**data.get('delta_comparison',{}),'delta':data['delta']}
     data['usage']=dict(value)
     data['delta']=after-before if before is not None else None
     data['delta_comparison']={'previous_tokens':before,'current_tokens':after,
                               'previous_at':previous_at,'current_at':observed_at}
+    if data['delta'] is not None and data['delta']>0:
+        data['last_increase']={**data['delta_comparison'],'delta':data['delta']}
     data.setdefault('updated_at',{})['usage']=observed_at
 
 
@@ -401,15 +419,21 @@ def delta_tooltip(data,settings=None):
         lines=['Since Last Refresh']
         for item in data['delta_sources']:
             if settings is not None and not enabled_source(item['source'],settings): continue
-            before=item.get('previous_tokens');after=item.get('current_tokens')
+            comparison=item.get('last_increase',{}) if item.get('delta')==0 else item
+            before=comparison.get('previous_tokens');after=comparison.get('current_tokens')
             lines.append(item.get('short','Codex')+': '+
-                         (f"{before:,} → {after:,} ({item['delta']:+,})" if item.get('delta') is not None
+                         (f"{before:,} → {after:,} ({comparison['delta']:+,})" if comparison.get('delta') is not None and before is not None and after is not None
                           else 'Available after the next successful refresh'))
+            if item.get('delta')==0 and comparison:
+                stamp=comparison.get('current_at')
+                when=' · '+datetime.fromtimestamp(stamp).strftime('%b %d, %H:%M') if stamp else ''
+                lines.append('Last positive increase'+when+'; latest refresh +0 tokens')
         return '\n'.join(lines)
-    pair=data.get('delta_comparison',{})
+    pair=data.get('last_increase',{}) if data.get('delta')==0 else data.get('delta_comparison',{})
     before=pair.get('previous_tokens');after=pair.get('current_tokens')
     if before is None or after is None: return 'Since Last Refresh'
-    return f'Since Last Refresh\nPrevious total: {before:,}\nCurrent total: {after:,}\nDifference: {after-before:+,} tokens'
+    title='Last positive increase (latest refresh +0 tokens)' if data.get('delta')==0 else 'Since Last Refresh'
+    return f'{title}\nPrevious total: {before:,}\nCurrent total: {after:,}\nDifference: {after-before:+,} tokens'
 
 
 def run(args, timeout=180, env=None):
@@ -686,7 +710,16 @@ def speed_batch(script,homes=None,windows=None):
             from rich.console import Console
             with contextlib.redirect_stdout(buffer), contextlib.redirect_stderr(buffer):
                 engine.print_report(engine.build_report(selected,metadata,100,tz),selected,tz,granularity='summary',show_unrecorded=True,console=Console(file=buffer,width=140,highlight=False))
-            output[key]=parse_speed(buffer.getvalue())
+            rows=parse_speed(buffer.getvalue())
+            ultra={}
+            for sample in selected:
+                if getattr(sample,'tier',None)=='ultrafast' and not sample.retried:
+                    ultra.setdefault(sample.model,[]).append(sample)
+            for row in rows:
+                stats=engine.summarize(ultra[row['model']],'effective') if row['model'] in ultra else None
+                row['ultra']=f"{stats['median']:.1f}" if stats else '·'
+                row['ultra_n']=str(stats['n']) if stats else '·'
+            output[key]=rows
         return output
     output=report(samples,totals)
     output['sources']=[{'source':source_id(home),'label':source_label(home),'short':names[source_id(home)],**report(items,metadata)}
@@ -1071,7 +1104,7 @@ class App:
         previous.destroy()
 
     def draw_content(self):
-        widgets={'usage':{},'speed':{},'empty':{},'grids':{},'periods':{}}
+        widgets={'usage':{},'speed':{},'empty':{},'grids':{},'periods':{},'speed_headers':{}}
         self.content_widgets=widgets
         self.visible_speed_windows=None
         limits=tk.Frame(self.body,bg=self.bg);limits.pack(fill='x')
@@ -1107,8 +1140,10 @@ class App:
             grid=tk.Frame(section,bg=self.bg); grid.pack(fill='x',pady=(0,6))
             if days=='1': self.day1_grid=grid
             widgets['grids'][days]=grid;widgets['speed'][days]={}
-            for i,v in enumerate(['Model','Normal','Fast','Ratio']):
-                self.label(grid,v,9,'#989b9e',anchor='w' if i==0 else 'e').grid(row=0,column=i,sticky='ew',pady=(0,2))
+            headers=[];widgets['speed_headers'][days]=headers
+            for i,v in enumerate(['Model','Normal','Fast','Ratio','Ultra']):
+                header=self.label(grid,v,9,'#989b9e',anchor='w' if i==0 else 'e')
+                header.grid(row=0,column=i,sticky='ew',pady=(0,2));headers.append(header)
                 grid.columnconfigure(i,weight=4 if i==0 else 1)
             widgets['empty'][days]=self.label(grid,'No available samples',10,anchor='w')
         self.update_content()
@@ -1158,6 +1193,16 @@ class App:
 
     def update_speed(self,days,rows):
         widgets=self.content_widgets;grid=widgets['grids'][days];existing=widgets['speed'][days]
+        show_ultra=self.settings.get('show_ultra',False)
+        positions=[0,1,2,4,3] if show_ultra else [0,1,2,3,4]
+        def arrange(labels,row):
+            for col,label in enumerate(labels):
+                if col==4 and not show_ultra: label.grid_remove()
+                else: label.grid(row=row,column=positions[col],sticky='ew',pady=(0,2) if row==0 else 1)
+        if getattr(grid,'show_ultra',None)!=show_ultra:
+            arrange(widgets['speed_headers'][days],0)
+            grid.columnconfigure(4,weight=1 if show_ultra else 0)
+            grid.show_ultra=show_ultra
         wanted=set();occurrences={}
         for index,row in enumerate(rows,1):
             model=row['model'];occurrence=occurrences.get(model,0);occurrences[model]=occurrence+1
@@ -1165,22 +1210,22 @@ class App:
             item=existing.get(key)
             if item is None:
                 labels=[];tips={}
-                for col in range(4):
+                for col in range(5):
                     label=AccountLabel(grid,self,(MONO_FONT,10),'#353a3e') if col==0 else self.label(grid,'',10,'#353a3e',font=MONO_FONT,anchor='e')
                     label.grid(row=index,column=col,sticky='ew',pady=1);labels.append(label)
-                    if col in (1,2,3): tips[col]=Tooltip(label,'')
+                    if col in (1,2,3,4): tips[col]=Tooltip(label,'')
                 item={'labels':labels,'tips':tips,'row':index};existing[key]=item
-            elif item['row']!=index:
-                for label in item['labels']: label.grid_configure(row=index)
-                item['row']=index
-            values=[model,row['normal'].strip('()~*†'),row['fast'].strip('()~*†'),row['ratio'].strip('()~*†')]
+            if item['row']!=index or item.get('show_ultra')!=show_ultra:
+                arrange(item['labels'],index);item['row']=index;item['show_ultra']=show_ultra
+            values=[model,row['normal'].strip('()~*†'),row['fast'].strip('()~*†'),row['ratio'].strip('()~*†'),row.get('ultra','·')]
             for col,value in enumerate(values):
                 options={'text':value}
                 if col==3: options['fg']=self.color(ratio_color(row['ratio']))
                 self.set_widget_options(item['labels'][col],**options)
-                if col in (1,2):
-                    mode='normal' if col==1 else 'fast';count=row[mode+'_n']
+                if col in (1,2,4):
+                    mode={1:'normal',2:'fast',4:'ultra'}[col];count=row.get(mode+'_n','·')
                     tip=f"{value} effective tokens/s\nApproximately {count} timed responses" if value not in ('·','—') else 'No timed responses'
+                    if col==4: tip+='\nRecorded Ultra Fast setting; client-side timing estimate'
                 elif col==3: tip='Fast ÷ Normal'+ ('\nLimited sample size' if '(' in row['ratio'] else '')
                 else: continue
                 tooltip=item['tips'][col]
@@ -1192,7 +1237,7 @@ class App:
         empty=widgets['empty'][days]
         if rows:
             if empty.winfo_manager(): empty.grid_remove()
-        elif not empty.winfo_manager(): empty.grid(row=1,column=0,columnspan=4,sticky='w')
+        else: empty.grid(row=1,column=0,columnspan=5 if show_ultra else 4,sticky='w')
     def build_about(self,parent):
         footer=tk.Frame(parent,bg=self.bg);footer.pack(fill='x',pady=(14,0))
         tk.Frame(footer,bg=self.color('#e9eaec'),height=1).pack(fill='x',pady=(0,12))
@@ -1253,6 +1298,9 @@ class App:
         for key,(title,hours) in SPEED_WINDOWS.items():
             ttk.Checkbutton(speed_choices,text=title,variable=speed_vars[key],style='Meter.TCheckbutton').pack(side='left',padx=(0,18))
         self.label(speed_box,'Only checked windows run on the next refresh. Uncheck all to skip speed scans.',9,anchor='w',wraplength=SETTINGS_WRAP,justify='left').pack(fill='x',pady=(5,0))
+        ultra_var=tk.BooleanVar(value=self.settings.get('show_ultra',False))
+        self.settings_vars['show_ultra']=ultra_var
+        ttk.Checkbutton(speed_box,text='Show Ultra Fast speed',variable=ultra_var,style='Meter.TCheckbutton').pack(anchor='w',pady=(7,0))
         self.label(box,'Reserve adjustment (tokens)',11,anchor='w').grid(row=4,column=0,sticky='w',pady=6)
         ttk.Entry(box,textvariable=r,width=21,font=(UI_FONT,10),style='Meter.TEntry').grid(row=4,column=1,padx=(20,0))
         reserve_help=(
@@ -1282,6 +1330,13 @@ class App:
             self.settings=updated;self.render_results('speed')
         for variable in speed_vars.values():
             traces.append((variable,variable.trace_add('write',toggle_speed)))
+        def toggle_ultra(*args):
+            updated={**self.settings,'show_ultra':ultra_var.get()}
+            try: save(CONFIG,updated)
+            except OSError as exc:
+                self.status.config(text='Could not save settings');self.status_detail=str(exc);return
+            self.settings=updated;self.render_results('speed')
+        traces.append((ultra_var,ultra_var.trace_add('write',toggle_ultra)))
         def commit(close=False,quiet=False):
             if self.settings_save_job is not None:
                 self.root.after_cancel(self.settings_save_job);self.settings_save_job=None

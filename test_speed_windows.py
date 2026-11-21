@@ -12,6 +12,13 @@ import meter
 
 
 class SpeedWindowTests(unittest.TestCase):
+    def test_ultra_defaults_off_and_persists_only_boolean_choices(self):
+        with tempfile.TemporaryDirectory() as folder,patch.object(meter,'CONFIG',Path(folder)/'settings.json'):
+            self.assertFalse(meter.load_settings()['show_ultra'])
+            for value,expected in [(True,True),(False,False),('false',False),(1,False)]:
+                meter.save(meter.CONFIG,{'show_ultra':value})
+                self.assertIs(meter.load_settings()['show_ultra'],expected)
+
     def test_defaults_saved_choices_and_all_off_survive_reload(self):
         with tempfile.TemporaryDirectory() as folder, patch.object(meter,'CONFIG',Path(folder)/'settings.json'):
             self.assertEqual(meter.load_settings()['speed_windows'],['4h','1'])

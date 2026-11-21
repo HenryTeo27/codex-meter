@@ -31,11 +31,12 @@ if sys.argv[1]=='write':
     app.settings_vars['reserve'].set('321')
     app.settings_vars['speed_windows']['4h'].set(False)
     app.settings_vars['speed_windows']['14'].set(True)
+    app.settings_vars['show_ultra'].set(True)
     # Deliberately quit without pressing Save or waiting for the edit debounce.
     app.busy=True
     app.quit()
 else:
-    assert app.settings=={'appearance':'dark','interval':0.5,'reserve':321,'speed_windows':['1','14']},app.settings
+    assert app.settings=={'appearance':'dark','interval':0.5,'reserve':321,'speed_windows':['1','14'],'show_ultra':True},app.settings
     assert app.data['usage']['total_tokens']==1000
     assert app.data['speed']=={'1':[],'14':[]}
     assert app.data['delta']==20

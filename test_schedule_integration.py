@@ -8,6 +8,11 @@ import meter
 
 
 class HiddenScheduleIntegrationTests(unittest.TestCase):
+    def tearDown(self):
+        # Do not leave retired Tk interpreters for a later worker to collect.
+        import gc
+        gc.collect()
+
     def test_failed_app_update_waits_before_retrying_after_restart(self):
         meter.load_gui()
         with tempfile.TemporaryDirectory() as folder:

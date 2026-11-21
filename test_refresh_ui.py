@@ -267,6 +267,29 @@ class HiddenRefreshTests(unittest.TestCase):
         self.assertEqual({item['source'] for item in app.data['speed']['sources']},set(ids))
         self.assertEqual(app.root.state(),'withdrawn')
 
+    def test_ultra_switch_saves_and_changes_only_the_table_columns(self):
+        app=self.app;widgets=app.content_widgets
+        row=widgets['speed']['1'][('gpt-test',0)]
+        app.data['speed']['1']=[{**self.old_row,'ultra':'44.2','ultra_n':'12'}]
+        self.assertEqual(row['labels'][4].winfo_manager(),'')
+        with patch.object(meter.tk.Toplevel,'deiconify'),patch.object(meter.tk.Toplevel,'grab_set'), \
+             patch.object(app.root,'state',return_value='normal'),patch.object(app,'draw',side_effect=AssertionError('Rebuilt page')):
+            app.settings_dialog()
+            self.assertFalse(app.settings_vars['show_ultra'].get())
+            app.settings_vars['show_ultra'].set(True)
+            self.assertTrue(meter.load_settings()['show_ultra'])
+            self.assertEqual(row['labels'][4].winfo_manager(),'grid')
+            self.assertEqual(row['labels'][4].cget('text'),'44.2')
+            self.assertEqual(row['labels'][4].grid_info()['column'],3)
+            self.assertEqual(row['labels'][3].grid_info()['column'],4)
+            self.assertIn('12 timed responses',row['tips'][4].text)
+            self.assertIs(row,widgets['speed']['1'][('gpt-test',0)])
+            app.settings_vars['show_ultra'].set(False)
+            self.assertFalse(meter.load_settings()['show_ultra'])
+            self.assertEqual(row['labels'][4].winfo_manager(),'')
+            self.assertEqual(row['labels'][3].grid_info()['column'],3)
+            app.close_settings()
+
     def test_settings_toggle_saves_immediately_and_keeps_usage_totals(self):
         app=self.app
         homes=[Path(self.folder.name)/'.codex',Path(self.folder.name)/'.codex-api']
